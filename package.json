@@ -1,0 +1,16 @@
+{
+  "name": "ai-document-ide",
+  "private": true,
+  "scripts": {
+    "frontend": "cd frontend && npm run dev",
+    "backend": "bash start-backend.sh",
+    "dev": "concurrently -n backend,frontend -c blue,green \"npm run backend\" \"npm run frontend\"",
+    "build": "cd frontend && npm run build",
+    "tauri:dev": "concurrently -n backend,tauri -c blue,magenta \"npm run backend\" \"npx tauri dev\"",
+    "tauri:build": "cd frontend && npm run build && cd .. && npx tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4",
+    "concurrently": "^9.1.0"
+  }
+}
