@@ -75,9 +75,9 @@ export function OutlinePanel() {
 
   return (
     <div className="chrome-panel w-52 border-r border-[var(--color-border)] bg-[var(--color-surface)] flex flex-col overflow-hidden shrink-0">
-      <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--color-border-light)]">
+      <div className="flex items-center justify-between px-3.5 h-9 border-b border-[var(--color-border-light)]">
         <span className="eyebrow">Outline</span>
-        <button onClick={() => setIsOpen(false)} className="p-0.5 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-tertiary)] transition-colors">
+        <button onClick={() => setIsOpen(false)} className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-tertiary)] transition-colors">
           <ChevronRight size={13} />
         </button>
       </div>
@@ -97,7 +97,7 @@ export function OutlinePanel() {
                   domNode.node.scrollIntoView({ behavior: 'smooth', block: 'center' })
                 }
               }}
-              className={`w-full text-left px-3 py-1.5 text-xs truncate transition-colors ${activeHeadingPos === item.pos ? 'bg-[var(--color-primary-light)] text-[var(--color-primary)] font-medium border-l-2 border-[var(--color-primary)]' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-secondary)] border-l-2 border-transparent'}`}
+              className={`w-full text-left px-3.5 py-1.5 text-xs truncate transition-colors border-l ${activeHeadingPos === item.pos ? 'bg-[var(--color-surface-secondary)] text-[var(--color-accent-text)] font-medium border-[var(--color-primary)]' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-secondary)] border-transparent'}`}
               style={{ paddingLeft: `${(item.level - 1) * 12 + 12}px` }}
             >
               {item.text}

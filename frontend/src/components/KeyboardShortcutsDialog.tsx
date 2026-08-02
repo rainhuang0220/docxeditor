@@ -87,7 +87,7 @@ export function KeyboardShortcutsDialog() {
           ))}
         </div>
 
-        <p className="mt-6 text-[12px] text-[var(--color-text-muted)] text-center font-[var(--font-mono)]">⌘ + Shift + / to toggle</p>
+        <p className="mt-6 text-[11px] text-[var(--color-text-muted)] text-center font-mono uppercase tracking-[0.06em]">⌘ + Shift + / to toggle</p>
       </div>
     </>
   )

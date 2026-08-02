@@ -99,7 +99,7 @@ export function ApiKeyDialog() {
     <>
       <button
         onClick={() => { setIsOpen(true); setStatus('idle') }}
-        className="tool-btn w-[30px] h-[30px] grid place-items-center rounded-md text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-tertiary)] hover:text-[var(--color-text-primary)]"
+        className="tool-btn w-[30px] h-[30px] grid place-items-center text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-tertiary)] hover:text-[var(--color-text-primary)]"
         title="AI Model Settings (API Key / Model / Base URL)"
       >
         <Key size={16} />
@@ -143,7 +143,7 @@ export function ApiKeyDialog() {
 
               <div>
                 <label className="field-label">
-                  Model <span className="font-normal text-[var(--color-text-muted)]">(optional)</span>
+                  Model <span className="text-[var(--color-text-muted)] normal-case tracking-normal font-sans">(optional)</span>
                 </label>
                 <input
                   type="text"
@@ -156,7 +156,7 @@ export function ApiKeyDialog() {
 
               <div>
                 <label className="field-label">
-                  Base URL <span className="font-normal text-[var(--color-text-muted)]">(optional, for proxies / compatible APIs)</span>
+                  Base URL <span className="text-[var(--color-text-muted)] normal-case tracking-normal font-sans">(optional, for proxies / compatible APIs)</span>
                 </label>
                 <input
                   type="text"
@@ -169,25 +169,25 @@ export function ApiKeyDialog() {
 
               <div className="pt-2">
                 <div className="text-[12px] text-[var(--color-text-muted)] mb-3 truncate">
-                  {status === 'saved' && <span className="text-emerald-500 inline-flex items-center gap-1"><Check size={12} /> Saved</span>}
-                  {status === 'valid' && <span className="text-emerald-500 inline-flex items-center gap-1"><Check size={12} /> Key works</span>}
-                  {status === 'invalid' && <span className="text-red-500 inline-flex items-center gap-1"><AlertCircle size={12} /> Invalid key</span>}
-                  {status === 'error' && <span className="text-red-500">Failed to save</span>}
-                  {status === 'testing' && <span className="text-[var(--color-primary)]">Testing...</span>}
+                  {status === 'saved' && <span className="text-[var(--color-success)] inline-flex items-center gap-1"><Check size={12} /> Saved</span>}
+                  {status === 'valid' && <span className="text-[var(--color-success)] inline-flex items-center gap-1"><Check size={12} /> Key works</span>}
+                  {status === 'invalid' && <span className="text-[var(--color-danger)] inline-flex items-center gap-1"><AlertCircle size={12} /> Invalid key</span>}
+                  {status === 'error' && <span className="text-[var(--color-danger)]">Failed to save</span>}
+                  {status === 'testing' && <span className="text-[var(--color-accent-text)]">Testing...</span>}
                   {status === 'idle' && 'Key is stored in memory only'}
                 </div>
                 <div className="flex gap-2 justify-end">
                   <button
                     onClick={handleTest}
                     disabled={!apiKey.trim() || status === 'testing' || status === 'saving'}
-                    className="btn btn-secondary disabled:opacity-40"
+                    className="btn btn-secondary"
                   >
                     Test
                   </button>
                   <button
                     onClick={handleSave}
                     disabled={!apiKey.trim() || status === 'saving'}
-                    className="btn btn-primary disabled:opacity-40"
+                    className="btn btn-primary"
                   >
                     {status === 'saving' ? 'Saving...' : 'Save'}
                   </button>

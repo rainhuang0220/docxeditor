@@ -31,7 +31,7 @@ export function PageSettingsDialog() {
     return (
       <button
         onClick={() => setIsOpen(true)}
-        className="tool-btn w-[30px] h-[30px] grid place-items-center rounded-md text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-tertiary)] hover:text-[var(--color-text-primary)]"
+        className="tool-btn w-[30px] h-[30px] grid place-items-center text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-tertiary)] hover:text-[var(--color-text-primary)]"
         title="Page Settings"
       >
         <Settings size={16} />
@@ -71,7 +71,7 @@ export function PageSettingsDialog() {
             <label className="field-label">Margins</label>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-[12px] text-[var(--color-text-tertiary)] mb-1 block">Top</label>
+                <label className="field-label">Top</label>
                 <input
                   type="text"
                   value={settings.marginTop}
@@ -80,7 +80,7 @@ export function PageSettingsDialog() {
                 />
               </div>
               <div>
-                <label className="text-[12px] text-[var(--color-text-tertiary)] mb-1 block">Bottom</label>
+                <label className="field-label">Bottom</label>
                 <input
                   type="text"
                   value={settings.marginBottom}
@@ -89,7 +89,7 @@ export function PageSettingsDialog() {
                 />
               </div>
               <div>
-                <label className="text-[12px] text-[var(--color-text-tertiary)] mb-1 block">Left</label>
+                <label className="field-label">Left</label>
                 <input
                   type="text"
                   value={settings.marginLeft}
@@ -98,7 +98,7 @@ export function PageSettingsDialog() {
                 />
               </div>
               <div>
-                <label className="text-[12px] text-[var(--color-text-tertiary)] mb-1 block">Right</label>
+                <label className="field-label">Right</label>
                 <input
                   type="text"
                   value={settings.marginRight}

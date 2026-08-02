@@ -9,13 +9,13 @@ export function DiffView({ oldText, newText }: DiffViewProps) {
   const diffs = diffWords(oldText, newText)
 
   return (
-    <div className="text-xs font-[var(--font-mono)] whitespace-pre-wrap leading-relaxed p-2.5 bg-[var(--color-surface-secondary)] border border-[var(--color-border-light)] rounded-md max-h-48 overflow-y-auto">
+    <div className="font-mono text-xs whitespace-pre-wrap leading-relaxed p-2.5 bg-[var(--color-surface-secondary)] border border-[var(--color-border-light)] max-h-48 overflow-y-auto text-[var(--color-text-secondary)]">
       {diffs.map((part, i) => {
         if (part.added) {
-          return <span key={i} className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 rounded-[2px]">{part.value}</span>
+          return <span key={i} className="bg-[var(--color-success)]/20 text-[var(--color-success)]">{part.value}</span>
         }
         if (part.removed) {
-          return <span key={i} className="bg-red-500/15 text-red-700 dark:text-red-400 line-through rounded-[2px]">{part.value}</span>
+          return <span key={i} className="bg-[var(--color-danger)]/20 text-[var(--color-danger)] line-through">{part.value}</span>
         }
         return <span key={i} className="text-[var(--color-text-tertiary)]">{part.value}</span>
       })}

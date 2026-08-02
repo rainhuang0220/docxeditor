@@ -44,7 +44,7 @@ export function TableOfContents() {
     return (
       <button
         onClick={() => { setIsOpen(true); generateToc() }}
-        className="tool-btn w-[30px] h-[30px] grid place-items-center rounded-md text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-tertiary)] hover:text-[var(--color-text-primary)]"
+        className="tool-btn w-[30px] h-[30px] grid place-items-center text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-tertiary)] hover:text-[var(--color-text-primary)]"
         title="Table of Contents"
       >
         <BookOpen size={16} />
@@ -84,10 +84,10 @@ export function TableOfContents() {
                       domNode.node.scrollIntoView({ behavior: 'smooth', block: 'center' })
                     }
                   }}
-                  className="w-full text-left text-[13px] text-[var(--color-text-secondary)] hover:bg-[var(--color-primary-light)] hover:text-[var(--color-primary)] rounded-md px-3 py-2 transition-colors"
+                  className="w-full text-left text-[13px] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-secondary)] hover:text-[var(--color-accent-text)] px-3 py-2 transition-colors"
                   style={{ paddingLeft: `${(item.level - 1) * 16 + 12}px` }}
                 >
-                  <span className="font-[var(--font-mono)] text-[var(--color-text-muted)] text-[10px] mr-2">H{item.level}</span>
+                  <span className="font-mono text-[var(--color-text-muted)] text-[10px] mr-2 uppercase tracking-[0.06em]">H{item.level}</span>
                   {item.text}
                 </button>
               ))}

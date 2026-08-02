@@ -1,72 +1,96 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
 
-@custom-variant dark (&:where(.dark, .dark *));
+/* Dark is the default; light is the opt-in override. */
+@custom-variant light (&:where(.light, .light *));
 
+/*
+ * Dark-first design system, adapted from the AEYE SaaS template's neutral
+ * ramp. The template is flat: hairline borders carry all structure, radii
+ * are near-zero, and Geist Mono uppercase labels replace decorative chrome.
+ *
+ * Accent contrast note: #0055FF on the #212121 base is only 2.87:1, so it is
+ * used for SOLID FILLS ONLY (white-on-blue is 5.61:1, passes AA). Blue text
+ * and icons use --color-accent-text (#6b9aff, 5.90:1 on base) instead.
+ */
 @theme {
-  /* Brand */
+  /* Accent — solid fills */
   --color-primary: #0055ff;
-  --color-primary-hover: #0047d6;
-  --color-primary-light: #e8f0ff;
-  --color-primary-subtle: rgba(0, 85, 255, 0.08);
+  --color-primary-hover: #2a72ff;
+  --color-primary-light: rgba(0, 85, 255, 0.18);
+  --color-primary-subtle: rgba(0, 85, 255, 0.10);
+  /* Accent — text/icons (AA on dark surfaces) */
+  --color-accent-text: #6b9aff;
 
-  /* Surfaces */
-  --color-surface: #ffffff;
-  --color-surface-secondary: #f4f4f5;
-  --color-surface-tertiary: #ececed;
-  --color-surface-hover: #efeff0;
+  /* Surfaces: grey-01 base, grey-02 inset, grey-03 raised */
+  --color-surface: #212121;
+  --color-surface-secondary: #141414;
+  --color-surface-tertiary: #2b2b2b;
+  --color-surface-hover: #333333;
 
-  /* Borders */
-  --color-border: #e2e2e4;
-  --color-border-light: #ececee;
-  --color-border-strong: #d4d4d7;
+  /* Borders — hairlines do the structural work */
+  --color-border: #3d3d3d;
+  --color-border-light: #2e2e2e;
+  --color-border-strong: #525252;
 
-  /* Text */
-  --color-text-primary: #1a1a1a;
-  --color-text-secondary: #4a4a4c;
-  --color-text-tertiary: #7a7a7e;
-  --color-text-muted: #adadb2;
+  /* Text: grey-09 → grey-06 */
+  --color-text-primary: #ffffff;
+  --color-text-secondary: #cccccc;
+  --color-text-tertiary: #a3a3a3;
+  --color-text-muted: #7a7a7a;
 
-  /* Page (document paper stays light in both themes) */
+  /* Semantic */
+  --color-success: #34d399;
+  --color-danger: #f87171;
+
+  /* The document paper stays white in both themes */
   --color-page: #ffffff;
-  --color-page-shadow: rgba(0, 0, 0, 0.05);
+  --color-page-ink: #1a1a1a;
+  --color-page-rule: #d4d4d7;
+  --color-page-inset: #f4f4f5;
 
   /* Typography */
   --font-sans: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-mono: 'Geist Mono', 'JetBrains Mono', 'SF Mono', monospace;
 
-  /* Elevation */
-  --shadow-page: 0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 16px rgba(0, 0, 0, 0.05), 0 12px 40px rgba(0, 0, 0, 0.04);
-  --shadow-pop: 0 1px 2px rgba(0, 0, 0, 0.05), 0 8px 24px rgba(0, 0, 0, 0.10), 0 2px 8px rgba(0, 0, 0, 0.06);
-  --shadow-dialog: 0 2px 6px rgba(0, 0, 0, 0.05), 0 24px 64px rgba(0, 0, 0, 0.14), 0 8px 24px rgba(0, 0, 0, 0.08);
+  /* Radii — near-flat, per the template */
+  --radius-hair: 2px;
+  --radius-card: 3px;
+
+  /* Elevation — single soft layer, not a stack */
+  --shadow-page: 0 1px 2px rgba(0, 0, 0, 0.35), 0 12px 32px rgba(0, 0, 0, 0.40);
+  --shadow-pop: 0 1px 2px rgba(0, 0, 0, 0.40), 0 10px 28px rgba(0, 0, 0, 0.50);
+  --shadow-dialog: 0 2px 8px rgba(0, 0, 0, 0.45), 0 28px 64px rgba(0, 0, 0, 0.55);
 }
 
-/* ─── Dark theme: remap the same token set ─────────────────────── */
-.dark {
-  --color-primary: #3d7bff;
-  --color-primary-hover: #6392ff;
-  --color-primary-light: rgba(61, 123, 255, 0.16);
-  --color-primary-subtle: rgba(61, 123, 255, 0.10);
+/* ─── Light theme: same token names, inverted ramp ──────────────── */
+.light {
+  --color-primary: #0044cc;
+  --color-primary-hover: #0055ff;
+  --color-primary-light: rgba(0, 85, 255, 0.09);
+  --color-primary-subtle: rgba(0, 85, 255, 0.06);
+  --color-accent-text: #0044cc;
 
-  --color-surface: #1d1d1f;
-  --color-surface-secondary: #141415;
-  --color-surface-tertiary: #262628;
-  --color-surface-hover: #2b2b2e;
+  --color-surface: #ffffff;
+  --color-surface-secondary: #f7f7f7;
+  --color-surface-tertiary: #efefef;
+  --color-surface-hover: #e8e8e8;
 
-  --color-border: #343437;
-  --color-border-light: #2a2a2d;
-  --color-border-strong: #404044;
+  --color-border: #e0e0e0;
+  --color-border-light: #ebebeb;
+  --color-border-strong: #c4c4c4;
 
-  --color-text-primary: #f2f2f3;
-  --color-text-secondary: #c6c6c9;
-  --color-text-tertiary: #8f8f94;
-  --color-text-muted: #5e5e63;
+  --color-text-primary: #1a1a1a;
+  --color-text-secondary: #474747;
+  --color-text-tertiary: #6e6e6e;
+  --color-text-muted: #949494;
 
-  --color-page-shadow: rgba(0, 0, 0, 0.35);
+  --color-success: #059669;
+  --color-danger: #dc2626;
 
-  --shadow-page: 0 1px 2px rgba(0, 0, 0, 0.30), 0 8px 32px rgba(0, 0, 0, 0.40), 0 2px 8px rgba(0, 0, 0, 0.30);
-  --shadow-pop: 0 1px 2px rgba(0, 0, 0, 0.40), 0 12px 32px rgba(0, 0, 0, 0.50), 0 4px 12px rgba(0, 0, 0, 0.40);
-  --shadow-dialog: 0 2px 8px rgba(0, 0, 0, 0.40), 0 32px 80px rgba(0, 0, 0, 0.55), 0 8px 32px rgba(0, 0, 0, 0.40);
+  --shadow-page: 0 1px 2px rgba(0, 0, 0, 0.05), 0 8px 24px rgba(0, 0, 0, 0.07);
+  --shadow-pop: 0 1px 2px rgba(0, 0, 0, 0.06), 0 8px 24px rgba(0, 0, 0, 0.10);
+  --shadow-dialog: 0 2px 8px rgba(0, 0, 0, 0.07), 0 24px 56px rgba(0, 0, 0, 0.14);
 }
 
 * {
@@ -82,11 +106,11 @@
 }
 
 html {
-  color-scheme: light;
+  color-scheme: dark;
 }
 
-html.dark {
-  color-scheme: dark;
+html.light {
+  color-scheme: light;
 }
 
 body {
@@ -108,18 +132,20 @@ body {
 }
 
 ::selection {
+  background: rgba(0, 85, 255, 0.35);
+}
+
+.light ::selection {
   background: rgba(0, 85, 255, 0.14);
 }
 
-.dark ::selection {
-  background: rgba(61, 123, 255, 0.28);
-}
-
-/* Unified focus ring */
+/* Unified focus ring — fully inset (2px inside the border) so the ring
+   never expands past the element box. Combined with a subtle alpha
+   border-color shift on inputs, this keeps focused controls from
+   visually "popping out" of their container. */
 :focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 1px;
-  border-radius: 2px;
+  outline: 2px solid var(--color-accent-text);
+  outline-offset: -2px;
 }
 
 button:focus:not(:focus-visible),
@@ -130,14 +156,44 @@ select:focus:not(:focus-visible) {
 
 /* ─── Shared chrome primitives ─────────────────────────────────── */
 
-/* Mono uppercase micro-label (eyebrow) */
+/* Mono uppercase micro-label (eyebrow) — the template's signature label */
 .eyebrow {
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 500;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
   color: var(--color-text-tertiary);
+}
+
+/* Accent variant: a highlighter swatch, not a capsule */
+.eyebrow-accent {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--color-accent-text);
+}
+
+/* Section label with a trailing hairline that fills remaining width */
+.rule-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.rule-label::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--color-border);
 }
 
 /* Tool button: crisp hover + press */
@@ -154,7 +210,7 @@ select:focus:not(:focus-visible) {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   box-shadow: var(--shadow-pop);
-  border-radius: 8px;
+  border-radius: var(--radius-card);
 }
 
 .menu-list {
@@ -170,7 +226,7 @@ select:focus:not(:focus-visible) {
   padding: 6px 10px;
   font-size: 13px;
   letter-spacing: -0.01em;
-  border-radius: 6px;
+  border-radius: var(--radius-hair);
   color: var(--color-text-secondary);
   transition: background-color 0.12s ease, color 0.12s ease;
 }
@@ -185,12 +241,12 @@ select:focus:not(:focus-visible) {
 }
 
 .menu-item.danger {
-  color: #dc3c3c;
+  color: var(--color-danger);
 }
 
 .menu-item.danger:hover:not(:disabled) {
-  background: rgba(220, 60, 60, 0.09);
-  color: #dc3c3c;
+  background: color-mix(in srgb, var(--color-danger) 14%, transparent);
+  color: var(--color-danger);
 }
 
 .menu-separator {
@@ -203,11 +259,13 @@ select:focus:not(:focus-visible) {
 .dialog-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(10, 10, 12, 0.35);
-  backdrop-filter: blur(3px);
-  -webkit-backdrop-filter: blur(3px);
+  background: rgba(8, 8, 8, 0.62);
   z-index: 40;
   animation: fadeIn 0.15s ease-out;
+}
+
+.light .dialog-backdrop {
+  background: rgba(10, 10, 12, 0.35);
 }
 
 .dialog-panel {
@@ -217,10 +275,30 @@ select:focus:not(:focus-visible) {
   transform: translate(-50%, -50%);
   background: var(--color-surface);
   border: 1px solid var(--color-border);
-  border-radius: 12px;
+  border-radius: var(--radius-card);
   box-shadow: var(--shadow-dialog);
   z-index: 50;
   animation: dialogIn 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Left-anchored variant: slides in from the right edge of the screen
+   and docks against the AI panel. Used by the conversation history. */
+.dialog-panel-left {
+  top: 0 !important;
+  bottom: 0 !important;
+  right: 420px !important;
+  left: auto !important;
+  transform: none !important;
+  height: 100vh !important;
+  max-height: 100vh !important;
+  border-radius: 0 !important;
+  border-right: 1px solid var(--color-border) !important;
+  border-top: 0 !important;
+  border-bottom: 0 !important;
+  border-left: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  animation: slideIn 0.22s cubic-bezier(0.16, 1, 0.3, 1) !important;
 }
 
 @keyframes dialogIn {
@@ -248,23 +326,26 @@ select:focus:not(:focus-visible) {
 }
 
 /* ─── Button primitives ────────────────────────────────────────── */
+/* Mono uppercase labels. Hover and focus stay strictly in-bounds —
+   no glow, no wipe, no outline expansion. */
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  font-size: 13px;
-  font-weight: 500;
-  font-family: var(--font-sans);
-  letter-spacing: -0.01em;
-  border-radius: 6px;
-  padding: 7px 14px;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border-radius: var(--radius-hair);
+  padding: 8px 14px;
   cursor: pointer;
-  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.1s ease;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
 .btn:active {
-  transform: scale(0.97);
+  transform: translateY(0.5px);
 }
 
 .btn-primary {
@@ -277,24 +358,33 @@ select:focus:not(:focus-visible) {
 }
 
 .btn-secondary {
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
+  background: transparent;
+  border: 1px solid var(--color-border-strong);
   color: var(--color-text-secondary);
 }
 
 .btn-secondary:hover {
-  background: var(--color-surface-secondary);
+  border-color: var(--color-text-primary);
   color: var(--color-text-primary);
-  border-color: var(--color-border-strong);
+  background: var(--color-surface-tertiary);
 }
 
 .btn-danger {
-  background: #dc3c3c;
+  background: var(--color-danger);
+  color: #10100f;
+}
+
+.light .btn-danger {
   color: #fff;
 }
 
 .btn-danger:hover {
-  background: #c32f2f;
+  filter: brightness(1.12);
+}
+
+.btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 /* Keyboard hint chip */
@@ -303,10 +393,9 @@ select:focus:not(:focus-visible) {
   padding: 3px 7px;
   font-size: 11px;
   font-family: var(--font-mono);
-  background: var(--color-surface-secondary);
+  background: var(--color-surface-tertiary);
   border: 1px solid var(--color-border);
-  border-bottom-width: 2px;
-  border-radius: 5px;
+  border-radius: var(--radius-hair);
   color: var(--color-text-tertiary);
   white-space: nowrap;
 }
@@ -314,11 +403,13 @@ select:focus:not(:focus-visible) {
 /* ─── Form primitives ──────────────────────────────────────────── */
 .field-label {
   display: block;
-  font-size: 13px;
+  font-family: var(--font-mono);
+  font-size: 10px;
   font-weight: 500;
-  letter-spacing: -0.01em;
-  color: var(--color-text-secondary);
-  margin-bottom: 6px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  margin-bottom: 7px;
 }
 
 .field-input,
@@ -328,11 +419,11 @@ select:focus:not(:focus-visible) {
   font-family: var(--font-sans);
   letter-spacing: -0.01em;
   border: 1px solid var(--color-border);
-  background: var(--color-surface);
+  background: var(--color-surface-secondary);
   color: var(--color-text-primary);
-  border-radius: 8px;
+  border-radius: var(--radius-hair);
   padding: 9px 12px;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
 }
 
 .field-input:hover,
@@ -343,8 +434,14 @@ select:focus:not(:focus-visible) {
 .field-input:focus,
 .field-select:focus {
   outline: none;
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px var(--color-primary-subtle);
+  /* Border-color shift is the only focus indicator. Background stays the
+     same so the field doesn't visually "pop out" of its dialog surface. */
+  border-color: var(--color-accent-text);
+}
+
+.field-input:focus-visible,
+.field-select:focus-visible {
+  outline: none;
 }
 
 .field-input::placeholder {
@@ -353,15 +450,15 @@ select:focus:not(:focus-visible) {
 
 .field-select {
   appearance: none;
-  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none'%3e%3cpath d='M1 1l4 4 4-4' stroke='%237a7a7e' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3e%3c/svg%3e");
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none'%3e%3cpath d='M1 1l4 4 4-4' stroke='%23a3a3a3' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3e%3c/svg%3e");
   background-repeat: no-repeat;
   background-position: right 12px center;
   padding-right: 34px;
   cursor: pointer;
 }
 
-.dark .field-select {
-  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none'%3e%3cpath d='M1 1l4 4 4-4' stroke='%238f8f94' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3e%3c/svg%3e");
+.light .field-select {
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none'%3e%3cpath d='M1 1l4 4 4-4' stroke='%236e6e6e' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3e%3c/svg%3e");
 }
 
 /* Toolbar native <select> restyle */
@@ -373,10 +470,10 @@ select:focus:not(:focus-visible) {
   letter-spacing: -0.01em;
   border: 1px solid transparent;
   background-color: transparent;
-  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none'%3e%3cpath d='M1 1l4 4 4-4' stroke='%237a7a7e' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3e%3c/svg%3e");
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none'%3e%3cpath d='M1 1l4 4 4-4' stroke='%23a3a3a3' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3e%3c/svg%3e");
   background-repeat: no-repeat;
   background-position: right 9px center;
-  border-radius: 6px;
+  border-radius: var(--radius-hair);
   padding: 0 26px 0 10px;
   color: var(--color-text-secondary);
   cursor: pointer;
@@ -390,44 +487,46 @@ select:focus:not(:focus-visible) {
 
 .toolbar-select:focus {
   outline: none;
-  border-color: var(--color-primary);
-  background-color: var(--color-surface);
-}
-
-.dark .toolbar-select {
-  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none'%3e%3cpath d='M1 1l4 4 4-4' stroke='%238f8f94' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3e%3c/svg%3e");
-}
-
-.dark .toolbar-select:focus {
+  border-color: var(--color-accent-text);
   background-color: var(--color-surface-tertiary);
 }
 
+/* Native dropdown lists inherit the page, not the dark chrome */
+.toolbar-select option,
+.field-select option {
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+}
+
+.light .toolbar-select {
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none'%3e%3cpath d='M1 1l4 4 4-4' stroke='%236e6e6e' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3e%3c/svg%3e");
+}
+
 /* ─── Document page (paper) ────────────────────────────────────── */
+/* The paper stays white in both themes, so everything inside it must use
+   the --color-page-* tokens rather than the (dark) chrome tokens. */
 .document-page {
   width: 210mm;
   min-height: 297mm;
   padding: 25.4mm;
   margin: 28px auto;
   background: var(--color-page);
+  color: var(--color-page-ink);
   box-shadow: var(--shadow-page);
-  border: 1px solid var(--color-border-light);
-  border-radius: 3px;
+  border-radius: var(--radius-hair);
   transition: box-shadow 0.25s ease;
 }
 
-.dark .document-page {
-  border-color: rgba(255, 255, 255, 0.06);
-}
-
-/* Editor canvas: faint blueprint dot grid */
+/* Editor canvas: the template's tiled dot grid, sunk below the paper */
 .editor-canvas {
-  background-color: var(--color-surface-secondary);
-  background-image: radial-gradient(circle, rgba(0, 0, 0, 0.055) 1px, transparent 1px);
+  background-color: #191919;
+  background-image: radial-gradient(circle, rgba(255, 255, 255, 0.07) 1px, transparent 1px);
   background-size: 22px 22px;
 }
 
-.dark .editor-canvas {
-  background-image: radial-gradient(circle, rgba(255, 255, 255, 0.045) 1px, transparent 1px);
+.light .editor-canvas {
+  background-color: var(--color-surface-secondary);
+  background-image: radial-gradient(circle, rgba(0, 0, 0, 0.055) 1px, transparent 1px);
 }
 
 /* ─── TipTap editor styles ─────────────────────────────────────── */
@@ -437,7 +536,8 @@ select:focus:not(:focus-visible) {
   font-family: 'Times New Roman', serif;
   font-size: 12pt;
   line-height: 1.5;
-  caret-color: #1a1a1a;
+  color: var(--color-page-ink);
+  caret-color: var(--color-primary);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -474,13 +574,13 @@ select:focus:not(:focus-visible) {
 
 .ProseMirror td,
 .ProseMirror th {
-  border: 1px solid #d4d4d7;
+  border: 1px solid var(--color-page-rule);
   padding: 8px 12px;
   text-align: left;
 }
 
 .ProseMirror th {
-  background: #f4f4f5;
+  background: var(--color-page-inset);
   font-weight: 600;
 }
 
@@ -510,6 +610,12 @@ select:focus:not(:focus-visible) {
   font-style: italic;
 }
 
+.ProseMirror hr:not(.page-break) {
+  border: none;
+  border-top: 1px solid var(--color-page-rule);
+  margin: 1.5em 0;
+}
+
 .ProseMirror ul,
 .ProseMirror ol {
   padding-left: 1.5em;
@@ -518,12 +624,6 @@ select:focus:not(:focus-visible) {
 
 .ProseMirror li {
   margin: 0.2em 0;
-}
-
-.ProseMirror hr {
-  border: none;
-  border-top: 1px solid #d4d4d7;
-  margin: 1.5em 0;
 }
 
 /* Page break */
@@ -535,15 +635,7 @@ select:focus:not(:focus-visible) {
   padding: 40px 0;
   position: relative;
   height: 0;
-  background: linear-gradient(
-    to bottom,
-    transparent 0%,
-    transparent 45%,
-    var(--color-border) 45%,
-    var(--color-border) 55%,
-    transparent 55%,
-    transparent 100%
-  );
+  background: none;
 }
 
 .ProseMirror .page-break::before {
@@ -552,11 +644,8 @@ select:focus:not(:focus-visible) {
   left: 0;
   right: 0;
   top: 50%;
-  height: 20px;
-  transform: translateY(-50%);
-  background: var(--color-surface-secondary);
-  border-top: 1px solid var(--color-border);
-  border-bottom: 1px solid var(--color-border);
+  height: 1px;
+  background: var(--color-page-rule);
 }
 
 .ProseMirror .page-break::after {
@@ -565,11 +654,12 @@ select:focus:not(:focus-visible) {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  background: var(--color-surface-secondary);
-  color: var(--color-text-muted);
-  font-size: 10px;
+  background: var(--color-page);
+  color: #949494;
+  font-size: 9px;
+  font-weight: 500;
   padding: 2px 10px;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   font-family: var(--font-mono);
   z-index: 1;
@@ -593,22 +683,21 @@ select:focus:not(:focus-visible) {
 }
 
 .ProseMirror code {
-  background: #f0f0f2;
-  border: 1px solid #e4e4e7;
-  border-radius: 4px;
+  background: var(--color-page-inset);
+  border: 1px solid var(--color-page-rule);
+  border-radius: var(--radius-hair);
   padding: 0.15em 0.4em;
   font-family: var(--font-mono);
   font-size: 0.9em;
 }
 
 .ProseMirror pre {
-  background: #161618;
-  color: #e5e7eb;
+  background: #1a1a1a;
+  color: #f2f2f2;
   padding: 1em 1.2em;
-  border-radius: 8px;
+  border-radius: var(--radius-hair);
   overflow-x: auto;
   margin: 1em 0;
-  border: 1px solid #2a2a2d;
 }
 
 .ProseMirror pre code {
@@ -620,16 +709,16 @@ select:focus:not(:focus-visible) {
 }
 
 .ProseMirror p.is-editor-empty:first-child::before {
-  color: #adadb2;
+  color: #b4b4b4;
   content: attr(data-placeholder);
   float: left;
   height: 0;
   pointer-events: none;
 }
 
-/* Selection highlight */
+/* Selection highlight — always the light-paper variant */
 .ProseMirror ::selection {
-  background: rgba(0, 85, 255, 0.14);
+  background: rgba(0, 85, 255, 0.16);
 }
 
 /* Table cell selection */
@@ -700,26 +789,26 @@ select:focus:not(:focus-visible) {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.16);
-  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 0;
   border: 3px solid transparent;
   background-clip: padding-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.28);
+  background: rgba(255, 255, 255, 0.28);
   border: 2px solid transparent;
   background-clip: padding-box;
 }
 
-.dark ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.14);
+.light ::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.16);
   border: 3px solid transparent;
   background-clip: padding-box;
 }
 
-.dark ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.24);
+.light ::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.28);
   border: 2px solid transparent;
   background-clip: padding-box;
 }
@@ -749,15 +838,15 @@ select:focus:not(:focus-visible) {
   background: var(--color-surface-tertiary);
   border: 1px solid var(--color-border-light);
   padding: 0.2em 0.5em;
-  border-radius: 5px;
+  border-radius: var(--radius-hair);
 }
 
 .ai-prose pre {
-  background: #161618;
-  color: #e5e7eb;
+  background: var(--color-surface-secondary);
+  color: var(--color-text-primary);
   padding: 1em 1.2em;
-  border-radius: 8px;
-  border: 1px solid #2a2a2d;
+  border-radius: var(--radius-hair);
+  border: 1px solid var(--color-border);
   overflow-x: auto;
   margin: 0.6em 0;
   font-size: 0.85em;
@@ -789,7 +878,7 @@ select:focus:not(:focus-visible) {
 }
 
 .ai-prose a {
-  color: var(--color-primary);
+  color: var(--color-accent-text);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
@@ -814,7 +903,7 @@ select:focus:not(:focus-visible) {
   content: '▊';
   animation: blink 1s step-end infinite;
   margin-left: 1px;
-  color: var(--color-primary);
+  color: var(--color-accent-text);
   font-size: 0.85em;
 }
 
@@ -848,13 +937,9 @@ select:focus:not(:focus-visible) {
 
 /* While the AI is writing into the document */
 .ai-writing .document-page {
-  outline: 2px solid var(--color-primary-subtle);
+  outline: 2px solid var(--color-primary);
   outline-offset: 2px;
   transition: outline-color 0.3s;
-}
-
-.dark .ai-writing .document-page {
-  outline-color: rgba(61, 123, 255, 0.45);
 }
 
 .ai-writing .ProseMirror > *:last-child::after {
@@ -863,6 +948,406 @@ select:focus:not(:focus-visible) {
   animation: blink 0.8s step-end infinite;
   margin-left: 1px;
 }
+
+/* ─── Chat message system ──────────────────────────────────────────
+   Cursor-style:
+   - User messages are anchored to the right, tinted accent bubble with
+     a flat-bottom-right corner that visually "tucks" against the rail.
+   - Assistant messages are full-width prose with a hairline avatar
+     square and a role eyebrow; consecutive assistant turns collapse
+     so the chat reads as a single stream, not 8 separate posts.
+   Everything stays strictly inside the panel — no shadows, no overflow. */
+
+.msg-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.msg-row-user {
+  justify-content: flex-end;
+}
+
+.msg-row-assistant {
+  justify-content: flex-start;
+}
+
+/* Compact gap when the previous assistant turn is still on-screen */
+.msg-row + .msg-row-assistant.msg-row-adjacent,
+.msg-row-assistant + .msg-row-assistant {
+  margin-top: -10px;
+}
+
+.msg-row-assistant + .msg-row-assistant .msg-avatar,
+.msg-row-assistant + .msg-row-assistant .msg-role {
+  visibility: hidden;
+}
+
+.msg-avatar {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  background: var(--color-surface-tertiary);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.msg-avatar-assistant {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+}
+
+.msg-user {
+  display: inline-block;
+  max-width: 88%;
+  background: var(--color-primary-light);
+  color: var(--color-text-primary);
+  font-size: 13.5px;
+  line-height: 1.55;
+  letter-spacing: -0.01em;
+  padding: 9px 14px;
+  /* Bubble shape: fully rounded on the user side, flat on the panel side
+     so the bubble reads as anchored to the right edge, not floating. */
+  border-radius: 14px 14px 4px 14px;
+  border: 1px solid color-mix(in srgb, var(--color-accent-text) 22%, transparent);
+}
+
+.light .msg-user {
+  color: var(--color-text-primary);
+  border-color: color-mix(in srgb, var(--color-accent-text) 28%, transparent);
+}
+
+.msg-body {
+  min-width: 0;
+  max-width: 100%;
+  flex: 1;
+}
+
+.msg-assistant {
+  font-size: 13.5px;
+  line-height: 1.65;
+  letter-spacing: -0.01em;
+  color: var(--color-text-secondary);
+  padding: 2px 0;
+}
+
+.msg-assistant > .ai-prose > :first-child {
+  margin-top: 0;
+}
+
+.msg-assistant > .ai-prose > :last-child {
+  margin-bottom: 0;
+}
+
+.msg-assistant.is-streaming {
+  color: var(--color-text-primary);
+}
+
+.msg-role {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  margin-bottom: 6px;
+}
+
+.msg-role-accent {
+  color: var(--color-accent-text);
+}
+
+.msg-role::before {
+  content: '';
+  width: 4px;
+  height: 4px;
+  background: var(--color-accent-text);
+  border-radius: 999px;
+}
+
+/* Group divider between user → assistant exchanges (only when there
+   are several turns; first user bubble keeps its breath). */
+.msg-turn-divider {
+  height: 1px;
+  background: var(--color-border-light);
+  margin: 4px 0;
+}
+
+/* ─── Composer (chat input) ───────────────────────────────────────
+   A bordered rail with the textarea on top and a slim action row below
+   — the model pill on the left, the send button on the right. The
+   send button sits below the typing area so it never overlaps the
+   caret, and the rail has a clearly-defined floor so the composer
+   never feels "too short". */
+.ai-composer {
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-secondary);
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.ai-composer:focus-within {
+  border-color: var(--color-accent-text);
+  background: var(--color-surface);
+}
+
+.ai-composer-textarea {
+  display: block;
+  width: 100%;
+  resize: none;
+  background: transparent;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--color-text-primary);
+  letter-spacing: -0.01em;
+  padding: 11px 14px 8px;
+  outline: none;
+  font-family: var(--font-sans);
+}
+
+.ai-composer-textarea::placeholder {
+  color: var(--color-text-muted);
+}
+
+.ai-composer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px 8px;
+  border-top: 1px solid var(--color-border-light);
+}
+
+.ai-composer-send {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  background: var(--color-primary);
+  color: #fff;
+  transition: background-color 0.15s ease, opacity 0.15s ease;
+}
+
+.ai-composer-send:hover:not(:disabled) {
+  background: var(--color-primary-hover);
+}
+
+.ai-composer-send:disabled {
+  opacity: 0.25;
+  cursor: not-allowed;
+}
+
+.ai-composer-cancel {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  background: var(--color-danger);
+  color: #fff;
+  transition: filter 0.15s ease;
+}
+
+.ai-composer-cancel:hover {
+  filter: brightness(1.10);
+}
+
+.ai-composer-hint {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.ai-composer-kbd {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 2px 6px;
+  background: var(--color-surface-tertiary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-hair);
+  color: var(--color-text-tertiary);
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
+/* ─── Slash command menu ─────────────────────────────────────────── */
+.cmd-menu {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-pop);
+  border-radius: var(--radius-card);
+  padding: 4px;
+}
+
+.cmd-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: var(--radius-hair);
+  transition: background-color 0.12s ease, color 0.12s ease;
+  color: var(--color-text-secondary);
+}
+
+.cmd-item:hover,
+.cmd-item.is-active {
+  background: var(--color-surface-tertiary);
+  color: var(--color-text-primary);
+}
+
+.cmd-item-glyph {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  background: var(--color-surface-tertiary);
+  border: 1px solid var(--color-border);
+  color: var(--color-accent-text);
+  flex-shrink: 0;
+}
+
+.cmd-item-name {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--color-text-primary);
+  text-transform: uppercase;
+}
+
+.cmd-item-desc {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+/* ─── Thread tabs ────────────────────────────────────────────────── */
+.thread-tabs {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.thread-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.thread-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 9px;
+  font-size: 12px;
+  letter-spacing: -0.005em;
+  color: var(--color-text-tertiary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  white-space: nowrap;
+  max-width: 180px;
+  transition: color 0.12s ease, background-color 0.12s ease, border-color 0.12s ease;
+  cursor: pointer;
+}
+
+.thread-tab:hover {
+  color: var(--color-text-secondary);
+  background: var(--color-surface-secondary);
+}
+
+.thread-tab.is-active {
+  color: var(--color-text-primary);
+  background: var(--color-surface);
+  border-color: var(--color-border);
+  border-bottom-color: var(--color-surface);
+  position: relative;
+  z-index: 1;
+}
+
+.thread-tab-close {
+  display: inline-grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-hair);
+  color: var(--color-text-muted);
+  opacity: 0;
+  transition: opacity 0.12s ease, color 0.12s ease, background-color 0.12s ease;
+}
+
+.thread-tab:hover .thread-tab-close,
+.thread-tab.is-active .thread-tab-close {
+  opacity: 1;
+}
+
+.thread-tab-close:hover {
+  color: var(--color-text-primary);
+  background: var(--color-surface-tertiary);
+}
+
+/* ─── Diff stat ────────────────────────────────────────────────────
+   Replaces the old one-<li>-per-operation list, which printed 40 lines
+   for a 40-block edit. */
+.diff-stat {
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-secondary);
+  border-radius: var(--radius-hair);
+}
+
+.diff-stat-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.diff-add { color: var(--color-success); }
+.diff-del { color: var(--color-danger); }
+
+.diff-stat-detail {
+  padding: 0 12px 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-text-tertiary);
+}
+
+/* Proportional add/remove bar, à la a git diffstat */
+.diff-bar {
+  display: flex;
+  height: 3px;
+  flex: 1;
+  min-width: 40px;
+  background: var(--color-border-light);
+  overflow: hidden;
+}
+
+.diff-bar-add { background: var(--color-success); }
+.diff-bar-del { background: var(--color-danger); }
 
 /* ─── Focus mode ───────────────────────────────────────────────── */
 .focus-mode .chrome-panel,
@@ -904,8 +1389,7 @@ select:focus:not(:focus-visible) {
 }
 
 .anim-pop {
-  animation: popIn 0.18s cubic-bezier(0.16, 1, 0.3, 1);
-  transform-origin: top left;
+  animation: fadeIn 0.14s ease-out;
 }
 
 /* Panel slide */

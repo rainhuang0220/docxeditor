@@ -198,7 +198,7 @@ export function Editor() {
       {/* Header */}
       <div
         ref={headerRef}
-        className="mx-auto mb-0 border-b border-[var(--color-border)] px-6 py-2 text-center text-[11px] text-[var(--color-text-muted)] font-[var(--font-sans)]"
+        className="mx-auto mb-0 border-b border-[var(--color-page-rule)] px-6 py-2 text-center text-[11px] text-[#949494]"
         style={{ width: pageStyle.width }}
         contentEditable
         suppressContentEditableWarning
@@ -233,7 +233,7 @@ export function Editor() {
 
       {/* Footer */}
       <div
-        className="mx-auto mt-0 border-t border-[var(--color-border)] px-6 py-2 flex justify-between text-[11px] text-[var(--color-text-muted)] font-[var(--font-sans)]"
+        className="mx-auto mt-0 border-t border-[var(--color-page-rule)] px-6 py-2 flex justify-between text-[11px] text-[#949494]"
         style={{ width: pageStyle.width }}
       >
         <span

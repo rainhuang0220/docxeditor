@@ -33,7 +33,7 @@ export function NewDocumentDialog() {
     <>
       <button
         onClick={() => setIsOpen(true)}
-        className="tool-btn w-[30px] h-[30px] grid place-items-center rounded-md text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-tertiary)] hover:text-[var(--color-text-primary)]"
+        className="tool-btn w-[30px] h-[30px] grid place-items-center text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-tertiary)] hover:text-[var(--color-text-primary)]"
         title="New Document"
       >
         <FilePlus size={16} />
@@ -55,9 +55,9 @@ export function NewDocumentDialog() {
                 <button
                   key={key}
                   onClick={() => applyTemplate(key)}
-                  className="text-left p-4 border border-[var(--color-border-light)] rounded-lg hover:border-[var(--color-primary)] hover:bg-[var(--color-primary-light)] transition-colors group"
+                  className="text-left p-4 border border-[var(--color-border)] hover:border-[var(--color-accent-text)] hover:bg-[var(--color-surface-secondary)] transition-colors group"
                 >
-                  <p className="font-medium text-[14px] text-[var(--color-text-primary)] group-hover:text-[var(--color-primary)] tracking-[-0.01em]">{tmpl.name}</p>
+                  <p className="font-medium text-[14px] text-[var(--color-text-primary)] group-hover:text-[var(--color-accent-text)] tracking-[-0.01em]">{tmpl.name}</p>
                   <p className="text-[13px] text-[var(--color-text-tertiary)] mt-1.5 line-clamp-2 leading-relaxed">
                     {tmpl.description}
                   </p>

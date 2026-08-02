@@ -61,11 +61,11 @@ export function VersionPanel() {
     return (
       <button
         onClick={() => setIsOpen(true)}
-        className="menu-surface fixed bottom-4 left-4 flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-secondary)] transition-colors"
+        className="menu-surface fixed bottom-4 left-4 flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-secondary)] transition-colors"
       >
         <History size={13} />
         <span>History</span>
-        <span className="font-[var(--font-mono)] text-[var(--color-text-muted)]">{versions.length}</span>
+        <span className="font-mono text-[var(--color-text-muted)]">{versions.length}</span>
       </button>
     )
   }
@@ -75,19 +75,19 @@ export function VersionPanel() {
   return (
     <>
       <div className="menu-surface fixed bottom-4 left-4 w-72 z-30 anim-pop" style={{ transformOrigin: 'bottom left' }}>
-        <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-[var(--color-border-light)]">
-          <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--color-text-primary)] tracking-[-0.01em]">
+        <div className="flex items-center justify-between px-3.5 h-9 border-b border-[var(--color-border-light)]">
+          <div className="flex items-center gap-2 text-xs font-semibold text-[var(--color-text-primary)] tracking-[-0.01em]">
             <History size={13} />
             <span>Version History</span>
           </div>
           <div className="flex items-center gap-1.5">
             <button
               onClick={() => saveVersion('Manual save')}
-              className="text-xs px-2.5 py-1 bg-[var(--color-primary)] text-white rounded-md hover:bg-[var(--color-primary-hover)] transition-colors font-medium"
+              className="btn btn-primary"
             >
               Save
             </button>
-            <button onClick={() => setIsOpen(false)} className="p-1 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-tertiary)] transition-colors">
+            <button onClick={() => setIsOpen(false)} className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-tertiary)] transition-colors">
               <ChevronDown size={14} />
             </button>
           </div>
@@ -100,26 +100,26 @@ export function VersionPanel() {
               <div key={v.id} className="flex items-center justify-between px-3.5 py-2 hover:bg-[var(--color-surface-secondary)] group transition-colors">
                 <div className="min-w-0 flex-1">
                   <p className="text-xs font-medium text-[var(--color-text-primary)] truncate">{v.description}</p>
-                  <p className="text-[11px] font-[var(--font-mono)] text-[var(--color-text-muted)]">{getRelativeTime(v.timestamp)}</p>
+                  <p className="font-mono text-[10.5px] text-[var(--color-text-muted)]">{getRelativeTime(v.timestamp)}</p>
                 </div>
                 <div className="flex items-center gap-0.5 ml-2">
                   <button
                     onClick={() => setDiffVersion(diffVersion?.id === v.id ? null : v)}
-                    className={`p-1 rounded-md transition-colors ${diffVersion?.id === v.id ? 'text-[var(--color-primary)] bg-[var(--color-primary-light)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-primary)] hover:bg-[var(--color-primary-light)]'}`}
+                    className={`p-1 transition-colors ${diffVersion?.id === v.id ? 'text-[var(--color-accent-text)] bg-[var(--color-surface-secondary)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-accent-text)] hover:bg-[var(--color-surface-secondary)]'}`}
                     title="Compare with current"
                   >
                     <Eye size={13} />
                   </button>
                   <button
                     onClick={() => restoreVersion(v)}
-                    className="p-1 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-primary)] hover:bg-[var(--color-primary-light)] transition-colors"
+                    className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-accent-text)] hover:bg-[var(--color-surface-secondary)] transition-colors"
                     title="Restore this version"
                   >
                     <RotateCcw size={13} />
                   </button>
                   <button
                     onClick={() => deleteVersion(v.id)}
-                    className="p-1 rounded-md text-[var(--color-text-muted)] hover:text-red-500 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-all"
+                    className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-danger)] hover:bg-[var(--color-surface-secondary)] opacity-0 group-hover:opacity-100 transition-all"
                     title="Delete version"
                   >
                     <Trash2 size={13} />
@@ -134,11 +134,11 @@ export function VersionPanel() {
       {/* Diff overlay */}
       {diffVersion && (
         <div className="menu-surface fixed bottom-4 left-[316px] w-96 max-h-80 z-30 flex flex-col anim-pop" style={{ transformOrigin: 'bottom left' }}>
-          <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-[var(--color-border-light)]">
+          <div className="flex items-center justify-between px-3.5 h-9 border-b border-[var(--color-border-light)]">
             <span className="text-xs font-medium text-[var(--color-text-primary)] truncate">
               Changes since: {diffVersion.description}
             </span>
-            <button onClick={() => setDiffVersion(null)} className="p-1 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-tertiary)] transition-colors">
+            <button onClick={() => setDiffVersion(null)} className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-tertiary)] transition-colors">
               <X size={13} />
             </button>
           </div>

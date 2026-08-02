@@ -1,21 +1,39 @@
-import { createContext, useContext, useState, useCallback } from 'react'
+import { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react'
 import type { ReactNode } from 'react'
 import { Editor as TipTapEditor } from '@tiptap/react'
+import {
+  loadThreads, saveThreads, loadActiveThreadId, saveActiveThreadId,
+  loadModelProfiles, saveModelProfiles, loadActiveModelId, saveActiveModelId,
+  DEFAULT_MODEL_PROFILES,
+  type ModelProfile, type StoredThread,
+} from '../utils/storage'
 
-interface Message {
+export interface Message {
   id: string
   role: 'user' | 'assistant'
   content: string
   streaming?: boolean
 }
 
+interface ThreadSummary {
+  id: string
+  title: string
+  createdAt: string
+  updatedAt: string
+  provider: ModelProfile['provider']
+  model: string
+  messageCount: number
+}
+
 interface EditorContextType {
   editor: TipTapEditor | null
   setEditor: (editor: TipTapEditor | null) => void
+  /** Messages of the currently-active thread. */
   messages: Message[]
   addMessage: (role: 'user' | 'assistant', content: string, streaming?: boolean) => string
   updateMessage: (id: string, content: string) => void
   finalizeMessage: (id: string, content: string) => void
+  /** Clears the current thread's messages and persists an empty thread. */
   clearMessages: () => void
   isAIPanelOpen: boolean
   toggleAIPanel: () => void
@@ -23,18 +41,67 @@ interface EditorContextType {
   setIsSending: (v: boolean) => void
   documentTitle: string
   setDocumentTitle: (title: string) => void
+  /* Threads */
+  threads: ThreadSummary[]
+  activeThreadId: string | null
+  /** Start a new blank thread and switch to it. Returns its id. */
+  startNewThread: () => string
+  switchThread: (id: string) => void
+  deleteThread: (id: string) => void
+  /** Persist the current message list into the active thread. Called after
+   *  messages change so history survives reloads. */
+  persistCurrentThread: () => void
+  /* Models */
+  models: ModelProfile[]
+  activeModelId: string
+  setActiveModelId: (id: string) => void
+  upsertModel: (profile: ModelProfile) => void
+  deleteModel: (id: string) => void
 }
 
 const EditorContext = createContext<EditorContextType | null>(null)
 
+function summarizeThread(t: StoredThread): ThreadSummary {
+  return {
+    id: t.id,
+    title: t.title,
+    createdAt: t.createdAt,
+    updatedAt: t.updatedAt,
+    provider: t.provider,
+    model: t.model,
+    messageCount: t.messages.length,
+  }
+}
+
+function deriveTitle(messages: Message[]): string {
+  const firstUser = messages.find(m => m.role === 'user' && m.content.trim())
+  if (!firstUser) return 'New chat'
+  const cleaned = firstUser.content.replace(/\s+/g, ' ').trim()
+  return cleaned.length > 48 ? cleaned.slice(0, 48) + '…' : cleaned
+}
+
 export function EditorProvider({ children }: { children: ReactNode }) {
   const [editor, setEditor] = useState<TipTapEditor | null>(null)
-  const [messages, setMessages] = useState<Message[]>([])
   const [isAIPanelOpen, setIsAIPanelOpen] = useState(true)
   const [isSending, setIsSending] = useState(false)
   const [documentTitle, setDocumentTitle] = useState(() => {
     return localStorage.getItem('ai-doc-ide-title') || 'Untitled Document'
   })
+
+  /* Threads */
+  const [threads, setThreads] = useState<StoredThread[]>(() => loadThreads())
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(() => {
+    const stored = loadActiveThreadId()
+    const list = loadThreads()
+    if (stored && list.some(t => t.id === stored)) return stored
+    return null
+  })
+  const messagesRef = useRef<Message[]>([])
+  const [messages, setMessages] = useState<Message[]>([])
+
+  /* Models */
+  const [models, setModels] = useState<ModelProfile[]>(() => loadModelProfiles())
+  const [activeModelId, setActiveModelIdState] = useState<string>(() => loadActiveModelId())
 
   const handleSetTitle = useCallback((title: string) => {
     setDocumentTitle(title)
@@ -42,27 +109,162 @@ export function EditorProvider({ children }: { children: ReactNode }) {
     document.title = `${title} - DocxEditor`
   }, [])
 
+  /** Hydrate messages when the active thread changes. */
+  useEffect(() => {
+    if (!activeThreadId) {
+      setMessages([])
+      messagesRef.current = []
+      return
+    }
+    const t = threads.find(t => t.id === activeThreadId)
+    const loaded: Message[] = t ? t.messages.map(m => ({ ...m, streaming: false })) : []
+    setMessages(loaded)
+    messagesRef.current = loaded
+  }, [activeThreadId, threads])
+
+  /** Persist threads whenever the threads list changes. */
+  useEffect(() => {
+    saveThreads(threads)
+  }, [threads])
+
   const addMessage = useCallback((role: 'user' | 'assistant', content: string, streaming?: boolean) => {
     const id = crypto.randomUUID()
-    setMessages(prev => [...prev, { id, role, content, streaming: streaming ?? false }])
+    const next: Message = { id, role, content, streaming: streaming ?? false }
+    setMessages(prev => {
+      const updated = [...prev, next]
+      messagesRef.current = updated
+      return updated
+    })
     return id
   }, [])
 
   const updateMessage = useCallback((id: string, content: string) => {
-    setMessages(prev => prev.map(m => m.id === id ? { ...m, content } : m))
+    setMessages(prev => {
+      const updated = prev.map(m => m.id === id ? { ...m, content } : m)
+      messagesRef.current = updated
+      return updated
+    })
   }, [])
 
   const finalizeMessage = useCallback((id: string, content: string) => {
-    setMessages(prev => prev.map(m => m.id === id ? { ...m, content, streaming: false } : m))
+    setMessages(prev => {
+      const updated = prev.map(m => m.id === id ? { ...m, content, streaming: false } : m)
+      messagesRef.current = updated
+      return updated
+    })
   }, [])
 
   const clearMessages = useCallback(() => {
     setMessages([])
+    messagesRef.current = []
   }, [])
 
   const toggleAIPanel = useCallback(() => {
     setIsAIPanelOpen(prev => !prev)
   }, [])
+
+  const startNewThread = useCallback((initialMessages?: Message[]): string => {
+    const id = crypto.randomUUID()
+    const now = new Date().toISOString()
+    const activeModel = models.find(m => m.id === activeModelId) || models[0]
+    const msgs = initialMessages ?? messagesRef.current
+    const thread: StoredThread = {
+      id,
+      title: deriveTitle(msgs),
+      createdAt: now,
+      updatedAt: now,
+      provider: activeModel?.provider || 'openai',
+      model: activeModel?.model || '',
+      messages: msgs.map(m => ({ id: m.id, role: m.role, content: m.content })),
+    }
+    setThreads(prev => [thread, ...prev])
+    setActiveThreadId(id)
+    saveActiveThreadId(id)
+    return id
+  }, [models, activeModelId])
+
+  const switchThread = useCallback((id: string) => {
+    setActiveThreadId(id)
+    saveActiveThreadId(id)
+  }, [])
+
+  const deleteThread = useCallback((id: string) => {
+    setThreads(prev => {
+      const next = prev.filter(t => t.id !== id)
+      return next
+    })
+    setActiveThreadId(prev => {
+      if (prev !== id) return prev
+      const remaining = threads.filter(t => t.id !== id)
+      const nextId = remaining[0]?.id ?? null
+      saveActiveThreadId(nextId)
+      return nextId
+    })
+  }, [threads])
+
+  /** Write the current messages list back to the active thread. */
+  const persistCurrentThread = useCallback(() => {
+    const list = messagesRef.current
+    if (list.length === 0) return
+    setThreads(prev => {
+      const id = activeThreadId
+      if (!id) return prev
+      const idx = prev.findIndex(t => t.id === id)
+      if (idx < 0) return prev
+      const existing = prev[idx]
+      const activeModel = models.find(m => m.id === activeModelId) || models[0]
+      const updated: StoredThread = {
+        ...existing,
+        title: deriveTitle(list),
+        updatedAt: new Date().toISOString(),
+        provider: activeModel?.provider || existing.provider,
+        model: activeModel?.model || existing.model,
+        messages: list.map(m => ({ id: m.id, role: m.role, content: m.content })),
+      }
+      const next = [...prev]
+      next[idx] = updated
+      // Newest first
+      next.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      return next
+    })
+  }, [activeThreadId, activeModelId, models])
+
+  const setActiveModelId = useCallback((id: string) => {
+    setActiveModelIdState(id)
+    saveActiveModelId(id)
+  }, [])
+
+  const upsertModel = useCallback((profile: ModelProfile) => {
+    setModels(prev => {
+      const idx = prev.findIndex(m => m.id === profile.id)
+      if (idx >= 0) {
+        const next = [...prev]
+        next[idx] = profile
+        return next
+      }
+      return [...prev, profile]
+    })
+  }, [])
+
+  const deleteModel = useCallback((id: string) => {
+    setModels(prev => {
+      if (prev.length <= 1) return prev
+      const next = prev.filter(m => m.id !== id)
+      if (activeModelId === id) {
+        const fallback = next[0]?.id || DEFAULT_MODEL_PROFILES[0].id
+        setActiveModelIdState(fallback)
+        saveActiveModelId(fallback)
+      }
+      return next
+    })
+  }, [activeModelId])
+
+  // Persist models whenever they change
+  useEffect(() => {
+    saveModelProfiles(models)
+  }, [models])
+
+  const threadSummaries: ThreadSummary[] = threads.map(summarizeThread)
 
   return (
     <EditorContext.Provider value={{
@@ -71,6 +273,10 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       isAIPanelOpen, toggleAIPanel,
       isSending, setIsSending,
       documentTitle, setDocumentTitle: handleSetTitle,
+      threads: threadSummaries,
+      activeThreadId,
+      startNewThread, switchThread, deleteThread, persistCurrentThread,
+      models, activeModelId, setActiveModelId, upsertModel, deleteModel,
     }}>
       {children}
     </EditorContext.Provider>

@@ -12,8 +12,8 @@ export function TableToolbar() {
   if (!editor || !editor.isActive('table')) return null
 
   return (
-    <div className="flex items-center gap-0.5 px-3 py-1 bg-[var(--color-primary-light)] border-b border-[var(--color-border)] text-xs">
-      <span className="eyebrow text-[var(--color-primary)] mr-2">Table</span>
+    <div className="flex items-center gap-0.5 px-3 py-1 bg-[var(--color-surface)] border-b border-[var(--color-border)] text-xs">
+      <span className="eyebrow-accent mr-2">Table</span>
 
       <TBtn onClick={() => editor.chain().focus().addRowAfter().run()} title="Add row below">
         <ArrowDown size={13} /><Plus size={10} className="-ml-1" />
@@ -80,7 +80,7 @@ function TBtn({ onClick, children, title, danger }: {
       onClick={onClick}
       title={title}
       aria-label={title}
-      className={`tool-btn flex items-center gap-0.5 p-1.5 rounded-md ${danger ? 'text-red-500 hover:bg-red-500/10' : 'text-[var(--color-primary)] hover:bg-[var(--color-primary-subtle)]'}`}
+      className={`tool-btn flex items-center gap-0.5 p-1.5 ${danger ? 'text-[var(--color-danger)] hover:bg-[color-mix(in_srgb,var(--color-danger)_12%,transparent)]' : 'text-[var(--color-accent-text)] hover:bg-[var(--color-surface-tertiary)]'}`}
     >
       {children}
     </button>

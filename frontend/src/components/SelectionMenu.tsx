@@ -98,7 +98,7 @@ export function SelectionMenu() {
   return (
     <BubbleMenu
       editor={editor}
-      className="flex items-center gap-0.5 px-1.5 py-1.5 bg-[#1c1c1e] rounded-lg shadow-[0_8px_24px_rgba(0,0,0,0.22),0_2px_8px_rgba(0,0,0,0.14)] border border-white/10 relative"
+      className="flex items-center gap-0.5 px-1.5 py-1.5 menu-surface relative"
     >
       <BubbleButton
         onClick={() => editor.chain().focus().toggleBold().run()}
@@ -119,7 +119,7 @@ export function SelectionMenu() {
         <UnderlineIcon size={15} />
       </BubbleButton>
 
-      <div className="w-px h-4 bg-white/20 mx-0.5" />
+      <div className="w-px h-4 bg-[var(--color-border)] mx-0.5" />
 
       <BubbleButton
         onClick={() => editor.chain().focus().setTextAlign('left').run()}
@@ -140,7 +140,7 @@ export function SelectionMenu() {
         <AlignRight size={15} />
       </BubbleButton>
 
-      <div className="w-px h-4 bg-white/20 mx-0.5" />
+      <div className="w-px h-4 bg-[var(--color-border)] mx-0.5" />
 
       {/* Case transform */}
       <div className="relative">
@@ -157,7 +157,7 @@ export function SelectionMenu() {
         )}
       </div>
 
-      <div className="w-px h-4 bg-white/20 mx-0.5" />
+      <div className="w-px h-4 bg-[var(--color-border)] mx-0.5" />
 
       <div className="relative">
         <BubbleButton onClick={() => { setShowAIActions(!showAIActions); setShowCaseMenu(false) }}>
@@ -191,7 +191,7 @@ function BubbleButton({ onClick, active, children }: {
     <button
       type="button"
       onClick={onClick}
-      className={`p-1.5 rounded-md text-white/75 hover:text-white hover:bg-white/10 transition-colors ${active ? 'bg-white/15 text-white' : ''}`}
+      className={`p-1.5 text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-tertiary)] transition-colors ${active ? 'bg-[var(--color-surface-tertiary)] text-[var(--color-accent-text)]' : ''}`}
     >
       {children}
     </button>

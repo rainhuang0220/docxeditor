@@ -11,6 +11,7 @@ import { useEditorContext } from '../context/EditorContext'
 import { NewDocumentDialog } from './NewDocumentDialog'
 import { ThemeToggle } from './ThemeToggle'
 import { ApiKeyDialog } from './ApiKeyDialog'
+import { ModelManager } from './ModelManager'
 import { FocusMode } from './FocusMode'
 import { TableOfContents } from './TableOfContents'
 import { PageSettingsDialog } from './PageSettingsDialog'
@@ -31,7 +32,7 @@ function ToolButton({ onClick, active, children, title }: {
       title={title}
       aria-label={title}
       aria-pressed={active}
-      className={`tool-btn w-[30px] h-[30px] grid place-items-center rounded-md ${active ? 'bg-[var(--color-primary-light)] text-[var(--color-primary)]' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-tertiary)] hover:text-[var(--color-text-primary)]'}`}
+      className={`tool-btn w-[30px] h-[30px] grid place-items-center ${active ? 'bg-[var(--color-primary-light)] text-[var(--color-accent-text)]' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-tertiary)] hover:text-[var(--color-text-primary)]'}`}
     >
       {children}
     </button>
@@ -125,7 +126,7 @@ export function Toolbar() {
   }
 
   return (
-    <div className="flex items-center gap-0.5 px-3 py-1.5 border-b border-[var(--color-border)] bg-[var(--color-surface)] flex-wrap" role="toolbar" aria-label="Document formatting">
+    <div className="flex items-center gap-1 px-3 py-1.5 border-b border-[var(--color-border)] bg-[var(--color-surface)] flex-wrap" role="toolbar" aria-label="Document formatting">
       <NewDocumentDialog />
 
       {/* Editable document title */}
@@ -133,7 +134,7 @@ export function Toolbar() {
         type="text"
         value={documentTitle}
         onChange={e => setDocumentTitle(e.target.value)}
-        className="h-[30px] text-[13px] border border-transparent bg-transparent px-2 font-medium tracking-[-0.01em] text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-border)] focus:bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-secondary)] rounded-md min-w-[120px] max-w-[200px] transition-colors"
+        className="h-[30px] text-[13px] border border-transparent bg-transparent px-2.5 font-medium tracking-[-0.01em] text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-border-strong)] focus:bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-secondary)] min-w-[120px] max-w-[220px] transition-colors"
         title="Document title"
       />
 
@@ -212,7 +213,7 @@ export function Toolbar() {
                 }
               }}
               placeholder="https://..."
-              className="w-52 text-xs border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] rounded-md px-2.5 py-1.5 focus:outline-none focus:border-[var(--color-primary)] placeholder:text-[var(--color-text-muted)]"
+              className="w-52 text-xs border border-[var(--color-border)] bg-[var(--color-surface-secondary)] text-[var(--color-text-primary)] px-2.5 py-1.5 focus:outline-none focus:border-[var(--color-accent-text)] placeholder:text-[var(--color-text-muted)]"
             />
             <button
               onClick={() => {
@@ -222,7 +223,7 @@ export function Toolbar() {
                 setLinkUrl('')
                 setShowLinkInput(false)
               }}
-              className="text-xs font-medium px-2.5 py-1.5 bg-[var(--color-primary)] text-white rounded-md hover:bg-[var(--color-primary-hover)] transition-colors"
+              className="btn btn-primary"
             >
               OK
             </button>
@@ -400,6 +401,7 @@ export function Toolbar() {
       <FocusMode />
       <TableOfContents />
       <ApiKeyDialog />
+      <ModelManager />
       <ThemeToggle />
 
       <ToolButton onClick={toggleAIPanel} title="AI Assistant">

@@ -24,9 +24,10 @@ export class ErrorBoundary extends Component<Props, State> {
     if (this.state.hasError) {
       return (
         <div className="flex items-center justify-center h-screen bg-[var(--color-surface-secondary)]">
-          <div className="text-center p-8">
-            <h2 className="text-lg font-semibold text-[var(--color-text-primary)] mb-2">Something went wrong</h2>
-            <p className="text-sm text-[var(--color-text-tertiary)] mb-4">{this.state.error?.message}</p>
+          <div className="text-center p-8 max-w-md">
+            <span className="eyebrow-accent block mb-3">Error</span>
+            <h2 className="text-lg font-medium text-[var(--color-text-primary)] mb-2 tracking-[-0.02em]">Something went wrong</h2>
+            <p className="text-sm text-[var(--color-text-tertiary)] mb-4 font-mono break-all">{this.state.error?.message}</p>
             <button
               onClick={() => window.location.reload()}
               className="btn btn-primary"

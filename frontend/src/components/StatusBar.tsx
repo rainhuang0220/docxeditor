@@ -88,47 +88,48 @@ export function StatusBar() {
   })
 
   return (
-    <div className="flex items-center gap-4 px-4 py-1.5 border-t border-[var(--color-border)] bg-[var(--color-surface)] text-[11px] text-[var(--color-text-tertiary)] font-[var(--font-mono)]" role="status" aria-label="Document statistics">
+    <div className="flex items-center gap-3 px-4 h-7 border-t border-[var(--color-border)] bg-[var(--color-surface)] font-mono text-[10.5px] text-[var(--color-text-tertiary)] uppercase tracking-[0.06em]" role="status" aria-label="Document statistics">
       <span>Ln {currentLine}, Col {from - editor.state.doc.resolve(from).start() + 1}</span>
-      <span>Words: {wordCount}</span>
-      <span>Characters: {charCount}</span>
-      <span>Paragraphs: {paragraphCount}</span>
-      {wordCount > 0 && <span>{Math.max(1, Math.ceil(wordCount / 200))} min read</span>}
-      {selectedCount > 0 && <span className="text-[var(--color-primary)]">Selected: {selectedCount}</span>}
+      <span className="text-[var(--color-text-muted)]">/</span>
+      <span>{wordCount} w</span>
+      <span>{charCount} ch</span>
+      <span>{paragraphCount} ¶</span>
+      {wordCount > 0 && <span className="text-[var(--color-text-muted)]">{Math.max(1, Math.ceil(wordCount / 200))} min</span>}
+      {selectedCount > 0 && <span className="text-[var(--color-accent-text)] normal-case tracking-normal">Sel {selectedCount}</span>}
       {/* Word goal progress */}
       {wordGoal && (
-        <span className="flex items-center gap-1.5" title={`${wordCount} / ${wordGoal} words`}>
-          <div className="w-16 h-1 bg-[var(--color-surface-tertiary)] rounded-full overflow-hidden">
+        <span className="flex items-center gap-2" title={`${wordCount} / ${wordGoal} words`}>
+          <div className="w-16 h-[3px] bg-[var(--color-border-light)]">
             <div
-              className={`h-full rounded-full transition-all ${wordCount >= wordGoal ? 'bg-emerald-500' : 'bg-[var(--color-primary)]'}`}
+              className={`h-full transition-all ${wordCount >= wordGoal ? 'bg-[var(--color-success)]' : 'bg-[var(--color-primary)]'}`}
               style={{ width: `${Math.min(100, (wordCount / wordGoal) * 100)}%` }}
             />
           </div>
-          <span className={wordCount >= wordGoal ? 'text-emerald-500' : ''}>{Math.round((wordCount / wordGoal) * 100)}%</span>
+          <span className={wordCount >= wordGoal ? 'text-[var(--color-success)]' : ''}>{Math.round((wordCount / wordGoal) * 100)}%</span>
         </span>
       )}
       <WordGoalButton wordGoal={wordGoal} setWordGoal={setWordGoal} />
       <div className="flex-1" />
-      {lastSaved && <span className="text-[var(--color-text-muted)]">Saved {lastSaved}</span>}
-      <span className={`flex items-center gap-1.5 ${backendOnline ? 'text-emerald-500' : 'text-red-400'}`} title={backendOnline ? 'Backend connected' : 'Backend offline'}>
-        <span className={`w-1.5 h-1.5 rounded-full ${backendOnline ? 'bg-emerald-500' : 'bg-red-400'} ${backendOnline ? 'shadow-[0_0_6px_rgba(16,185,129,0.6)]' : ''}`} />
+      {lastSaved && <span className="text-[var(--color-text-muted)] normal-case tracking-normal">Saved {lastSaved}</span>}
+      <span className={`flex items-center gap-1.5 normal-case tracking-normal ${backendOnline ? 'text-[var(--color-success)]' : 'text-[var(--color-danger)]'}`} title={backendOnline ? 'Backend connected' : 'Backend offline'}>
+        <span className={`w-1.5 h-1.5 ${backendOnline ? 'bg-[var(--color-success)]' : 'bg-[var(--color-danger)]'}`} />
         {backendOnline ? 'AI Ready' : 'Offline'}
       </span>
       <div className="flex items-center gap-0.5">
         <button
           onClick={() => setZoom(z => Math.max(50, z - 10))}
-          className="p-1 rounded-md hover:bg-[var(--color-surface-tertiary)] hover:text-[var(--color-text-primary)] transition-colors"
+          className="w-5 h-5 grid place-items-center hover:bg-[var(--color-surface-tertiary)] hover:text-[var(--color-text-primary)] transition-colors"
           title="Zoom out"
         >
-          <Minus size={12} />
+          <Minus size={11} />
         </button>
-        <span className="w-9 text-center">{zoom}%</span>
+        <span className="w-9 text-center text-[var(--color-text-secondary)] tabular-nums">{zoom}%</span>
         <button
           onClick={() => setZoom(z => Math.min(200, z + 10))}
-          className="p-1 rounded-md hover:bg-[var(--color-surface-tertiary)] hover:text-[var(--color-text-primary)] transition-colors"
+          className="w-5 h-5 grid place-items-center hover:bg-[var(--color-surface-tertiary)] hover:text-[var(--color-text-primary)] transition-colors"
           title="Zoom in"
         >
-          <Plus size={12} />
+          <Plus size={11} />
         </button>
       </div>
     </div>
@@ -172,7 +173,7 @@ function WordGoalButton({ wordGoal, setWordGoal }: { wordGoal: number | null, se
           }}
           onBlur={save}
           placeholder="Goal"
-          className="w-14 text-[11px] font-[var(--font-mono)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-primary)] rounded-md px-1.5 py-0.5 focus:outline-none focus:border-[var(--color-primary)]"
+          className="w-14 font-mono text-[11px] border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-primary)] px-1.5 py-0.5 focus:outline-none focus:border-[var(--color-accent-text)]"
         />
       </div>
     )
@@ -181,7 +182,7 @@ function WordGoalButton({ wordGoal, setWordGoal }: { wordGoal: number | null, se
   return (
     <button
       onClick={open}
-      className={`p-1 rounded-md hover:bg-[var(--color-surface-tertiary)] hover:text-[var(--color-text-primary)] transition-colors ${wordGoal ? 'text-[var(--color-primary)]' : ''}`}
+      className={`w-5 h-5 grid place-items-center hover:bg-[var(--color-surface-tertiary)] hover:text-[var(--color-text-primary)] transition-colors ${wordGoal ? 'text-[var(--color-accent-text)]' : ''}`}
       title={wordGoal ? `Goal: ${wordGoal} words (click to edit)` : 'Set word goal'}
     >
       <Target size={12} />

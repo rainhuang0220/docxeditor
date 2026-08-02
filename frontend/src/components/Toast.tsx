@@ -16,9 +16,9 @@ export function showToast(text: string, type: ToastMessage['type'] = 'info') {
 }
 
 const TOAST_ICON = {
-  success: <CheckCircle2 size={15} className="text-emerald-400 shrink-0" />,
-  error: <AlertCircle size={15} className="text-red-400 shrink-0" />,
-  info: <Info size={15} className="text-[#6b9bff] shrink-0" />,
+  success: <CheckCircle2 size={15} className="text-[var(--color-success)] shrink-0" />,
+  error: <AlertCircle size={15} className="text-[var(--color-danger)] shrink-0" />,
+  info: <Info size={15} className="text-[var(--color-accent-text)] shrink-0" />,
 }
 
 export function ToastContainer() {
@@ -42,13 +42,13 @@ export function ToastContainer() {
       {toasts.map(toast => (
         <div
           key={toast.id}
-          className="flex items-center gap-2.5 pl-3.5 pr-3 py-2.5 rounded-lg bg-[#1c1c1e] text-white/90 text-[13px] font-medium tracking-[-0.01em] border border-white/10 shadow-[0_8px_24px_rgba(0,0,0,0.24),0_2px_8px_rgba(0,0,0,0.16)] animate-[slideUp_0.22s_cubic-bezier(0.16,1,0.3,1)]"
+          className="flex items-center gap-2.5 pl-3.5 pr-3 py-2.5 menu-surface text-[var(--color-text-primary)] text-[13px] font-medium tracking-[-0.01em] animate-[slideUp_0.22s_cubic-bezier(0.16,1,0.3,1)]"
         >
           {TOAST_ICON[toast.type]}
           <span>{toast.text}</span>
           <button
             onClick={() => setToasts(prev => prev.filter(t => t.id !== toast.id))}
-            className="ml-1 p-0.5 rounded text-white/40 hover:text-white/90 hover:bg-white/10 transition-colors"
+            className="ml-1 p-0.5 text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-tertiary)] transition-colors"
             aria-label="Dismiss"
           >
             <X size={13} />

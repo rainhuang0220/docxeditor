@@ -176,12 +176,12 @@ export function FindReplaceBar() {
               if (e.key === 'Escape') handleClose()
             }}
             placeholder={useRegex ? "Regex pattern..." : "Find..."}
-            className="flex-1 text-[13px] border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] rounded-md px-2.5 py-1.5 focus:outline-none focus:border-[var(--color-primary)] placeholder:text-[var(--color-text-muted)] transition-colors"
+            className="flex-1 text-[13px] border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] px-2.5 py-1.5 focus:outline-none focus:border-[var(--color-accent-text)] placeholder:text-[var(--color-text-muted)] transition-colors"
             autoFocus
           />
           <button
             onClick={() => setCaseSensitive(!caseSensitive)}
-            className={`p-1.5 rounded-md transition-colors ${caseSensitive ? 'bg-[var(--color-primary-light)] text-[var(--color-primary)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-tertiary)]'}`}
+            className={`p-1.5 transition-colors ${caseSensitive ? 'bg-[var(--color-surface-secondary)] text-[var(--color-accent-text)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-tertiary)]'}`}
             title="Case sensitive"
             aria-label="Toggle case sensitive"
           >
@@ -189,19 +189,19 @@ export function FindReplaceBar() {
           </button>
           <button
             onClick={() => setUseRegex(!useRegex)}
-            className={`p-1.5 rounded-md transition-colors ${useRegex ? 'bg-[var(--color-primary-light)] text-[var(--color-primary)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-tertiary)]'}`}
+            className={`p-1.5 transition-colors ${useRegex ? 'bg-[var(--color-surface-secondary)] text-[var(--color-accent-text)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-tertiary)]'}`}
             title="Use regex"
             aria-label="Toggle regex"
           >
             <Regex size={14} />
           </button>
-          <button onClick={findAllMatches} className="px-2.5 py-1.5 text-xs font-medium bg-[var(--color-surface-secondary)] border border-[var(--color-border)] rounded-md hover:bg-[var(--color-surface-tertiary)] text-[var(--color-text-secondary)] transition-colors" title="Find">
+          <button onClick={findAllMatches} className="px-2.5 py-1.5 text-xs font-medium bg-[var(--color-surface-secondary)] border border-[var(--color-border)] hover:bg-[var(--color-surface-tertiary)] text-[var(--color-text-secondary)] transition-colors" title="Find">
             Find
           </button>
-          <button onClick={goPrev} className="p-1.5 rounded-md text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-tertiary)] transition-colors" title="Previous" aria-label="Previous match">
+          <button onClick={goPrev} className="p-1.5 text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-tertiary)] transition-colors" title="Previous" aria-label="Previous match">
             <ChevronUp size={14} />
           </button>
-          <button onClick={goNext} className="p-1.5 rounded-md text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-tertiary)] transition-colors" title="Next" aria-label="Next match">
+          <button onClick={goNext} className="p-1.5 text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-tertiary)] transition-colors" title="Next" aria-label="Next match">
             <ChevronDown size={14} />
           </button>
         </div>
@@ -213,21 +213,21 @@ export function FindReplaceBar() {
             onChange={e => setReplaceText(e.target.value)}
             onKeyDown={e => { if (e.key === 'Escape') handleClose() }}
             placeholder="Replace with..."
-            className="flex-1 text-[13px] border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] rounded-md px-2.5 py-1.5 focus:outline-none focus:border-[var(--color-primary)] placeholder:text-[var(--color-text-muted)] transition-colors"
+            className="flex-1 text-[13px] border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] px-2.5 py-1.5 focus:outline-none focus:border-[var(--color-accent-text)] placeholder:text-[var(--color-text-muted)] transition-colors"
           />
-          <button onClick={handleReplace} className="px-2.5 py-1.5 text-xs font-medium bg-[var(--color-surface-secondary)] border border-[var(--color-border)] rounded-md hover:bg-[var(--color-surface-tertiary)] text-[var(--color-text-secondary)] transition-colors" title="Replace current">
+          <button onClick={handleReplace} className="px-2.5 py-1.5 text-xs font-medium bg-[var(--color-surface-secondary)] border border-[var(--color-border)] hover:bg-[var(--color-surface-tertiary)] text-[var(--color-text-secondary)] transition-colors" title="Replace current">
             1
           </button>
-          <button onClick={handleReplaceAll} className="px-2.5 py-1.5 text-xs font-medium bg-[var(--color-surface-secondary)] border border-[var(--color-border)] rounded-md hover:bg-[var(--color-surface-tertiary)] text-[var(--color-text-secondary)] transition-colors" title="Replace all">
+          <button onClick={handleReplaceAll} className="px-2.5 py-1.5 text-xs font-medium bg-[var(--color-surface-secondary)] border border-[var(--color-border)] hover:bg-[var(--color-surface-tertiary)] text-[var(--color-text-secondary)] transition-colors" title="Replace all">
             All
           </button>
         </div>
 
         {matches.length > 0 && (
-          <p className="text-[11px] font-[var(--font-mono)] text-[var(--color-text-tertiary)]">{currentIndex + 1} of {matches.length} match{matches.length > 1 ? 'es' : ''}</p>
+          <p className="font-mono text-[10.5px] uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">{currentIndex + 1} of {matches.length} match{matches.length > 1 ? 'es' : ''}</p>
         )}
         {findText && matches.length === 0 && currentIndex === -1 && (
-          <p className="text-[11px] font-[var(--font-mono)] text-[var(--color-text-muted)]">No matches found</p>
+          <p className="font-mono text-[10.5px] uppercase tracking-[0.06em] text-[var(--color-text-muted)]">No matches found</p>
         )}
       </div>
     </div>

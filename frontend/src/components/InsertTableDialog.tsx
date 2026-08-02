@@ -22,7 +22,7 @@ export function InsertTableDialog() {
         onClick={() => setIsOpen(true)}
         title="Insert Table"
         aria-label="Insert Table"
-        className="tool-btn w-[30px] h-[30px] grid place-items-center rounded-md text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-tertiary)] hover:text-[var(--color-text-primary)]"
+        className="tool-btn w-[30px] h-[30px] grid place-items-center text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-tertiary)] hover:text-[var(--color-text-primary)]"
       >
         <TableIcon size={16} />
       </button>
@@ -39,8 +39,8 @@ export function InsertTableDialog() {
             </div>
 
             <div className="space-y-3.5">
-              <div className="flex items-center justify-between">
-                <label className="text-[13px] text-[var(--color-text-secondary)]">Rows</label>
+              <div className="flex items-center justify-between gap-3">
+                <label className="field-label mb-0">Rows</label>
                 <input
                   type="number"
                   min={1}
@@ -50,8 +50,8 @@ export function InsertTableDialog() {
                   className="field-input w-20"
                 />
               </div>
-              <div className="flex items-center justify-between">
-                <label className="text-[13px] text-[var(--color-text-secondary)]">Columns</label>
+              <div className="flex items-center justify-between gap-3">
+                <label className="field-label mb-0">Columns</label>
                 <input
                   type="number"
                   min={1}
@@ -61,7 +61,7 @@ export function InsertTableDialog() {
                   className="field-input w-20"
                 />
               </div>
-              <label className="flex items-center gap-2.5 text-[13px] text-[var(--color-text-secondary)] pt-1 cursor-pointer">
+              <label className="flex items-center gap-2.5 text-[12.5px] text-[var(--color-text-secondary)] pt-1 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={withHeader}
