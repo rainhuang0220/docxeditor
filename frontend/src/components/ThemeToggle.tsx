@@ -16,7 +16,7 @@ export function ThemeToggle() {
   return (
     <button
       onClick={() => setIsDark(prev => !prev)}
-      className="p-1.5 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300"
+      className="tool-btn w-[30px] h-[30px] grid place-items-center rounded-md text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-tertiary)] hover:text-[var(--color-text-primary)]"
       title={isDark ? 'Light mode' : 'Dark mode'}
     >
       {isDark ? <Sun size={16} /> : <Moon size={16} />}

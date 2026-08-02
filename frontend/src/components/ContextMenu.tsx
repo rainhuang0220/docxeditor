@@ -6,11 +6,12 @@ interface ContextMenuState {
   y: number
   visible: boolean
   inTable: boolean
+  hasSelection: boolean
 }
 
 export function ContextMenu() {
   const { editor } = useEditorContext()
-  const [menu, setMenu] = useState<ContextMenuState>({ x: 0, y: 0, visible: false, inTable: false })
+  const [menu, setMenu] = useState<ContextMenuState>({ x: 0, y: 0, visible: false, inTable: false, hasSelection: false })
   const menuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -21,7 +22,8 @@ export function ContextMenu() {
 
       e.preventDefault()
       const inTable = editor?.isActive('table') || false
-      setMenu({ x: e.clientX, y: e.clientY, visible: true, inTable })
+      const { from, to } = editor?.state.selection || { from: 0, to: 0 }
+      setMenu({ x: e.clientX, y: e.clientY, visible: true, inTable, hasSelection: from !== to })
     }
 
     const handleClick = () => setMenu(prev => ({ ...prev, visible: false }))
@@ -39,17 +41,23 @@ export function ContextMenu() {
   return (
     <div
       ref={menuRef}
-      className="fixed z-50 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg py-1 min-w-[160px]"
+      className="menu-surface anim-pop fixed z-50 menu-list min-w-[200px]"
       style={{ left: menu.x, top: menu.y }}
     >
-      <MenuItem onClick={() => editor.chain().focus().toggleBold().run()}>Bold</MenuItem>
-      <MenuItem onClick={() => editor.chain().focus().toggleItalic().run()}>Italic</MenuItem>
-      <MenuItem onClick={() => editor.chain().focus().toggleUnderline().run()}>Underline</MenuItem>
-      <MenuDivider />
-      <MenuItem onClick={() => document.execCommand('copy')}>Copy</MenuItem>
-      <MenuItem onClick={() => document.execCommand('cut')}>Cut</MenuItem>
+      <MenuItem onClick={() => document.execCommand('copy')} disabled={!menu.hasSelection}>Copy</MenuItem>
+      <MenuItem onClick={() => document.execCommand('cut')} disabled={!menu.hasSelection}>Cut</MenuItem>
       <MenuItem onClick={() => document.execCommand('paste')}>Paste</MenuItem>
+      <MenuItem onClick={() => editor.commands.selectAll()}>Select All</MenuItem>
       <MenuDivider />
+      {menu.hasSelection && (
+        <>
+          <MenuItem onClick={() => editor.chain().focus().toggleBold().run()}>Bold</MenuItem>
+          <MenuItem onClick={() => editor.chain().focus().toggleItalic().run()}>Italic</MenuItem>
+          <MenuItem onClick={() => editor.chain().focus().toggleUnderline().run()}>Underline</MenuItem>
+          <MenuDivider />
+        </>
+      )}
+      <MenuItem onClick={() => window.dispatchEvent(new CustomEvent('editor:open-find-replace'))}>Find & Replace</MenuItem>
       <MenuItem onClick={() => editor.chain().focus().setHorizontalRule().run()}>Insert Horizontal Rule</MenuItem>
       <MenuItem onClick={() => editor.chain().focus().setPageBreak().run()}>Insert Page Break</MenuItem>
 
@@ -70,11 +78,12 @@ export function ContextMenu() {
   )
 }
 
-function MenuItem({ onClick, children, danger }: { onClick: () => void; children: React.ReactNode; danger?: boolean }) {
+function MenuItem({ onClick, children, danger, disabled }: { onClick: () => void; children: React.ReactNode; danger?: boolean; disabled?: boolean }) {
   return (
     <button
       onClick={onClick}
-      className={`w-full text-left px-3 py-1.5 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 ${danger ? 'text-red-600' : 'text-gray-700 dark:text-gray-200'}`}
+      disabled={disabled}
+      className={`menu-item ${danger ? 'danger' : ''}`}
     >
       {children}
     </button>
@@ -82,5 +91,5 @@ function MenuItem({ onClick, children, danger }: { onClick: () => void; children
 }
 
 function MenuDivider() {
-  return <div className="h-px bg-gray-200 dark:bg-gray-700 my-1" />
+  return <div className="menu-separator" />
 }

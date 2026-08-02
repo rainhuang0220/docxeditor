@@ -1,17 +1,19 @@
+import { useRef } from 'react'
 import {
   Rows3, Columns3, Trash2, Plus, ArrowDown, ArrowUp, ArrowLeft, ArrowRight,
-  Merge, Split,
+  Merge, Split, Paintbrush, PanelTop,
 } from 'lucide-react'
 import { useEditorContext } from '../context/EditorContext'
 
 export function TableToolbar() {
   const { editor } = useEditorContext()
+  const cellColorRef = useRef<HTMLInputElement>(null)
 
   if (!editor || !editor.isActive('table')) return null
 
   return (
-    <div className="flex items-center gap-0.5 px-2 py-1 bg-blue-50 dark:bg-blue-900/30 border-b border-blue-200 dark:border-blue-800 text-xs">
-      <span className="text-blue-600 dark:text-blue-400 font-medium mr-2">Table</span>
+    <div className="flex items-center gap-0.5 px-3 py-1 bg-[var(--color-primary-light)] border-b border-[var(--color-border)] text-xs">
+      <span className="eyebrow text-[var(--color-primary)] mr-2">Table</span>
 
       <TBtn onClick={() => editor.chain().focus().addRowAfter().run()} title="Add row below">
         <ArrowDown size={13} /><Plus size={10} className="-ml-1" />
@@ -26,8 +28,11 @@ export function TableToolbar() {
         <ArrowLeft size={13} /><Plus size={10} className="-ml-1" />
       </TBtn>
 
-      <div className="w-px h-4 bg-blue-200 mx-1" />
+      <div className="w-px h-4 bg-[var(--color-border-strong)] mx-1" />
 
+      <TBtn onClick={() => editor.chain().focus().toggleHeaderRow().run()} title="Toggle header row">
+        <PanelTop size={13} />
+      </TBtn>
       <TBtn onClick={() => editor.chain().focus().mergeCells().run()} title="Merge cells">
         <Merge size={13} />
       </TBtn>
@@ -35,7 +40,20 @@ export function TableToolbar() {
         <Split size={13} />
       </TBtn>
 
-      <div className="w-px h-4 bg-blue-200 mx-1" />
+      {/* Cell background color */}
+      <div className="relative">
+        <input
+          ref={cellColorRef}
+          type="color"
+          className="absolute opacity-0 w-0 h-0"
+          onChange={e => editor.chain().focus().setCellAttribute('backgroundColor', e.target.value).run()}
+        />
+        <TBtn onClick={() => cellColorRef.current?.click()} title="Cell background color">
+          <Paintbrush size={13} />
+        </TBtn>
+      </div>
+
+      <div className="w-px h-4 bg-[var(--color-border-strong)] mx-1" />
 
       <TBtn onClick={() => editor.chain().focus().deleteRow().run()} title="Delete row" danger>
         <Rows3 size={13} /><Trash2 size={10} className="-ml-1" />
@@ -62,7 +80,7 @@ function TBtn({ onClick, children, title, danger }: {
       onClick={onClick}
       title={title}
       aria-label={title}
-      className={`flex items-center gap-0.5 p-1 rounded hover:bg-blue-100 dark:hover:bg-blue-900/40 ${danger ? 'text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30' : 'text-blue-700 dark:text-blue-400'}`}
+      className={`tool-btn flex items-center gap-0.5 p-1.5 rounded-md ${danger ? 'text-red-500 hover:bg-red-500/10' : 'text-[var(--color-primary)] hover:bg-[var(--color-primary-subtle)]'}`}
     >
       {children}
     </button>

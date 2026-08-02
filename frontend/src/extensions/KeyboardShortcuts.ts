@@ -79,6 +79,31 @@ export const KeyboardShortcuts = Extension.create({
         window.dispatchEvent(new CustomEvent('editor:toggle-ai-panel'))
         return true
       },
+      // Ctrl+\ — clear formatting
+      'Mod-\\': ({ editor }) => {
+        editor.chain().focus().unsetAllMarks().clearNodes().run()
+        return true
+      },
+      // Tab — move to next cell in table (or indent list)
+      'Tab': ({ editor }) => {
+        if (editor.isActive('table')) {
+          return editor.chain().focus().goToNextCell().run()
+        }
+        if (editor.isActive('listItem')) {
+          return editor.chain().focus().sinkListItem('listItem').run()
+        }
+        return false
+      },
+      // Shift+Tab — move to previous cell in table (or outdent list)
+      'Shift-Tab': ({ editor }) => {
+        if (editor.isActive('table')) {
+          return editor.chain().focus().goToPreviousCell().run()
+        }
+        if (editor.isActive('listItem')) {
+          return editor.chain().focus().liftListItem('listItem').run()
+        }
+        return false
+      },
     }
   },
 })

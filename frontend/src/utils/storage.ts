@@ -1,5 +1,6 @@
 const STORAGE_KEY = 'ai-doc-ide-document'
 const VERSIONS_KEY = 'ai-doc-ide-versions'
+const TITLE_KEY = 'ai-doc-ide-title'
 const AUTO_SAVE_INTERVAL = 5000
 
 export function saveDocument(html: string) {
@@ -66,5 +67,40 @@ export function loadVersions(): StoredVersion[] {
     return JSON.parse(raw)
   } catch {
     return []
+  }
+}
+
+export function saveTitle(title: string) {
+  try {
+    localStorage.setItem(TITLE_KEY, title)
+  } catch { /* ignore */ }
+}
+
+export function loadTitle(): string {
+  try {
+    return localStorage.getItem(TITLE_KEY) || 'Untitled Document'
+  } catch {
+    return 'Untitled Document'
+  }
+}
+
+const HEADER_KEY = 'ai-doc-ide-header'
+const FOOTER_KEY = 'ai-doc-ide-footer'
+
+export function saveHeaderFooter(header: string, footer: string) {
+  try {
+    localStorage.setItem(HEADER_KEY, header)
+    localStorage.setItem(FOOTER_KEY, footer)
+  } catch { /* ignore */ }
+}
+
+export function loadHeaderFooter(): { header: string; footer: string } {
+  try {
+    return {
+      header: localStorage.getItem(HEADER_KEY) || '',
+      footer: localStorage.getItem(FOOTER_KEY) || '',
+    }
+  } catch {
+    return { header: '', footer: '' }
   }
 }

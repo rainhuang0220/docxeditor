@@ -15,7 +15,7 @@ export function FocusMode() {
   return (
     <button
       onClick={toggle}
-      className="p-1.5 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300"
+      className="tool-btn w-[30px] h-[30px] grid place-items-center rounded-md text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-tertiary)] hover:text-[var(--color-text-primary)]"
       title={isFocused ? 'Exit Focus Mode' : 'Focus Mode'}
     >
       {isFocused ? <Minimize2 size={16} /> : <Maximize2 size={16} />}

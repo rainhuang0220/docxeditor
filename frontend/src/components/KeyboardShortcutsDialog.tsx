@@ -5,6 +5,7 @@ const shortcuts = [
   { category: 'General', items: [
     { keys: 'Ctrl+S', desc: 'Save version' },
     { keys: 'Ctrl+F', desc: 'Find & Replace' },
+    { keys: 'Ctrl+H', desc: 'Find & Replace' },
     { keys: 'Ctrl+P', desc: 'Print' },
     { keys: 'Ctrl+Z', desc: 'Undo' },
     { keys: 'Ctrl+Shift+Z', desc: 'Redo' },
@@ -20,6 +21,7 @@ const shortcuts = [
     { keys: 'Ctrl+Shift+X', desc: 'Strikethrough' },
     { keys: 'Ctrl+.', desc: 'Superscript' },
     { keys: 'Ctrl+,', desc: 'Subscript' },
+    { keys: 'Ctrl+\\', desc: 'Clear formatting' },
   ]},
   { category: 'Alignment', items: [
     { keys: 'Ctrl+Shift+L', desc: 'Align left' },
@@ -33,6 +35,10 @@ const shortcuts = [
     { keys: 'Ctrl+Shift+3', desc: 'Heading 3' },
     { keys: 'Ctrl+Shift+Q', desc: 'Blockquote' },
     { keys: 'Ctrl+Enter', desc: 'Page break' },
+  ]},
+  { category: 'Tables & Lists', items: [
+    { keys: 'Tab', desc: 'Next cell / Indent list' },
+    { keys: 'Shift+Tab', desc: 'Previous cell / Outdent list' },
   ]},
 ]
 
@@ -53,24 +59,25 @@ export function KeyboardShortcutsDialog() {
   if (!isOpen) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-[480px] max-h-[80vh] overflow-y-auto p-5">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-100">Keyboard Shortcuts</h3>
-          <button onClick={() => setIsOpen(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
-            <X size={16} />
+    <>
+      <div className="dialog-backdrop" onClick={() => setIsOpen(false)} />
+      <div className="dialog-panel w-[520px] max-w-[90vw] max-h-[80vh] overflow-y-auto p-6">
+        <div className="flex items-center justify-between mb-5">
+          <h3 className="dialog-title">Keyboard Shortcuts</h3>
+          <button onClick={() => setIsOpen(false)} className="dialog-close">
+            <X size={15} />
           </button>
         </div>
 
-        <div className="space-y-4">
+        <div className="space-y-5">
           {shortcuts.map(section => (
             <div key={section.category}>
-              <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">{section.category}</h4>
-              <div className="space-y-1">
+              <h4 className="eyebrow mb-2">{section.category}</h4>
+              <div className="space-y-0.5">
                 {section.items.map(item => (
-                  <div key={item.keys} className="flex items-center justify-between py-1">
-                    <span className="text-sm text-gray-700 dark:text-gray-300">{item.desc}</span>
-                    <kbd className="px-2 py-0.5 text-xs bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded font-mono text-gray-600 dark:text-gray-300">
+                  <div key={item.keys} className="flex items-center justify-between py-1.5">
+                    <span className="text-[13px] text-[var(--color-text-secondary)]">{item.desc}</span>
+                    <kbd className="kbd">
                       {item.keys.replace(/Ctrl/g, navigator.platform.includes('Mac') ? '⌘' : 'Ctrl')}
                     </kbd>
                   </div>
@@ -80,8 +87,8 @@ export function KeyboardShortcutsDialog() {
           ))}
         </div>
 
-        <p className="mt-4 text-xs text-gray-400 text-center">Press Ctrl+Shift+/ to toggle this dialog</p>
+        <p className="mt-6 text-[12px] text-[var(--color-text-muted)] text-center font-[var(--font-mono)]">⌘ + Shift + / to toggle</p>
       </div>
-    </div>
+    </>
   )
 }

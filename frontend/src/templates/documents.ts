@@ -1,10 +1,12 @@
 export const DOCUMENT_TEMPLATES = {
   blank: {
     name: 'Blank Document',
+    description: 'Start with an empty document',
     content: `<h1>Untitled Document</h1><p></p>`,
   },
   report: {
     name: 'Report',
+    description: 'Professional report with sections',
     content: `
       <h1 style="text-align: center">Report Title</h1>
       <p style="text-align: center"><em>Author Name</em></p>
@@ -31,6 +33,7 @@ export const DOCUMENT_TEMPLATES = {
   },
   proposal: {
     name: 'Proposal',
+    description: 'Project proposal template',
     content: `
       <h1 style="text-align: center">Project Proposal</h1>
       <p style="text-align: center"><strong>Prepared by:</strong> Your Name</p>
@@ -57,6 +60,7 @@ export const DOCUMENT_TEMPLATES = {
   },
   letter: {
     name: 'Formal Letter',
+    description: 'Formal business letter',
     content: `
       <p style="text-align: right">[Your Address]</p>
       <p style="text-align: right">[City, State ZIP]</p>
@@ -83,6 +87,7 @@ export const DOCUMENT_TEMPLATES = {
   },
   academic: {
     name: 'Academic Paper',
+    description: 'Academic paper with citations',
     content: `
       <h1 style="text-align: center">Paper Title</h1>
       <p style="text-align: center"><em>Author Name<sup>1</sup></em></p>
@@ -113,6 +118,81 @@ export const DOCUMENT_TEMPLATES = {
       <p></p>
       <h2>References</h2>
       <p>[1] Author, A. (Year). Title. Journal, Volume(Issue), Pages.</p>
+    `,
+  },
+  meeting: {
+    name: 'Meeting Notes',
+    description: 'Meeting agenda and action items',
+    content: `
+      <h1>Meeting Notes</h1>
+      <p><strong>Date:</strong> [Date]</p>
+      <p><strong>Attendees:</strong> [Names]</p>
+      <p><strong>Location:</strong> [Room / Video Link]</p>
+      <p></p>
+      <h2>Agenda</h2>
+      <ol><li><p>Topic 1</p></li><li><p>Topic 2</p></li><li><p>Topic 3</p></li></ol>
+      <p></p>
+      <h2>Discussion</h2>
+      <p>Summarize the key discussion points here.</p>
+      <p></p>
+      <h2>Decisions</h2>
+      <ul><li><p>Decision 1</p></li><li><p>Decision 2</p></li></ul>
+      <p></p>
+      <h2>Action Items</h2>
+      <table><tr><th>Task</th><th>Owner</th><th>Due Date</th></tr><tr><td>Action item 1</td><td>Name</td><td>Date</td></tr><tr><td>Action item 2</td><td>Name</td><td>Date</td></tr></table>
+      <p></p>
+      <h2>Next Meeting</h2>
+      <p>[Date and time of next meeting]</p>
+    `,
+  },
+  resume: {
+    name: 'Resume',
+    description: 'Professional resume / CV',
+    content: `
+      <h1 style="text-align: center">[Your Full Name]</h1>
+      <p style="text-align: center">[Email] | [Phone] | [City, State] | [LinkedIn URL]</p>
+      <p></p>
+      <h2>Professional Summary</h2>
+      <p>Experienced professional with expertise in [field]. Proven track record of [achievement]. Seeking to leverage skills in [target role].</p>
+      <p></p>
+      <h2>Experience</h2>
+      <h3>[Job Title] — [Company Name]</h3>
+      <p><em>[Start Date] – [End Date]</em></p>
+      <ul><li><p>Accomplishment or responsibility 1</p></li><li><p>Accomplishment or responsibility 2</p></li><li><p>Accomplishment or responsibility 3</p></li></ul>
+      <p></p>
+      <h3>[Job Title] — [Company Name]</h3>
+      <p><em>[Start Date] – [End Date]</em></p>
+      <ul><li><p>Accomplishment or responsibility 1</p></li><li><p>Accomplishment or responsibility 2</p></li></ul>
+      <p></p>
+      <h2>Education</h2>
+      <h3>[Degree] — [University]</h3>
+      <p><em>[Graduation Year]</em></p>
+      <p></p>
+      <h2>Skills</h2>
+      <p>[Skill 1], [Skill 2], [Skill 3], [Skill 4], [Skill 5]</p>
+    `,
+  },
+  newsletter: {
+    name: 'Newsletter',
+    description: 'Newsletter or blog article',
+    content: `
+      <h1>[Newsletter Title]</h1>
+      <p><em>Issue #X — [Date]</em></p>
+      <p></p>
+      <h2>Highlights</h2>
+      <p>Welcome to this issue! Here's what we're covering:</p>
+      <ul><li><p>Topic 1</p></li><li><p>Topic 2</p></li><li><p>Topic 3</p></li></ul>
+      <p></p>
+      <h2>Feature Story</h2>
+      <p>Write the main article or announcement here. Keep it engaging and concise.</p>
+      <p></p>
+      <h2>Updates</h2>
+      <p>Share recent news, product updates, or team highlights.</p>
+      <p></p>
+      <h2>Upcoming Events</h2>
+      <ul><li><p>[Event 1] — [Date]</p></li><li><p>[Event 2] — [Date]</p></li></ul>
+      <p></p>
+      <p style="text-align: center"><em>Thanks for reading! Reply with feedback or questions.</em></p>
     `,
   },
 }

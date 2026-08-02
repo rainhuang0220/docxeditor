@@ -44,7 +44,7 @@ export function TableOfContents() {
     return (
       <button
         onClick={() => { setIsOpen(true); generateToc() }}
-        className="p-1.5 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300"
+        className="tool-btn w-[30px] h-[30px] grid place-items-center rounded-md text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-tertiary)] hover:text-[var(--color-text-primary)]"
         title="Table of Contents"
       >
         <BookOpen size={16} />
@@ -53,25 +53,26 @@ export function TableOfContents() {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-96 max-h-[70vh] flex flex-col">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-700">
-          <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-100">Table of Contents</h3>
+    <>
+      <div className="dialog-backdrop" onClick={() => setIsOpen(false)} />
+      <div className="dialog-panel w-[420px] max-w-[90vw] max-h-[70vh] flex flex-col">
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-[var(--color-border-light)]">
+          <h3 className="dialog-title">Table of Contents</h3>
           <div className="flex items-center gap-1">
-            <button onClick={generateToc} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300" title="Refresh">
+            <button onClick={generateToc} className="dialog-close" title="Refresh">
               <RefreshCw size={14} />
             </button>
-            <button onClick={() => setIsOpen(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
-              <X size={16} />
+            <button onClick={() => setIsOpen(false)} className="dialog-close">
+              <X size={14} />
             </button>
           </div>
         </div>
 
         <div className="flex-1 overflow-y-auto p-3">
           {items.length === 0 ? (
-            <p className="text-sm text-gray-400 text-center py-4">No headings found in the document.</p>
+            <p className="text-[13px] text-[var(--color-text-muted)] text-center py-6">No headings found in the document.</p>
           ) : (
-            <div className="space-y-1">
+            <div className="space-y-0.5">
               {items.map((item, i) => (
                 <button
                   key={i}
@@ -83,10 +84,10 @@ export function TableOfContents() {
                       domNode.node.scrollIntoView({ behavior: 'smooth', block: 'center' })
                     }
                   }}
-                  className="w-full text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded px-2 py-1"
-                  style={{ paddingLeft: `${(item.level - 1) * 16 + 8}px` }}
+                  className="w-full text-left text-[13px] text-[var(--color-text-secondary)] hover:bg-[var(--color-primary-light)] hover:text-[var(--color-primary)] rounded-md px-3 py-2 transition-colors"
+                  style={{ paddingLeft: `${(item.level - 1) * 16 + 12}px` }}
                 >
-                  <span className="text-gray-400 text-xs mr-2">H{item.level}</span>
+                  <span className="font-[var(--font-mono)] text-[var(--color-text-muted)] text-[10px] mr-2">H{item.level}</span>
                   {item.text}
                 </button>
               ))}
@@ -94,22 +95,19 @@ export function TableOfContents() {
           )}
         </div>
 
-        <div className="px-4 py-3 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-2">
-          <button
-            onClick={() => setIsOpen(false)}
-            className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 dark:text-gray-300 rounded hover:bg-gray-50 dark:hover:bg-gray-700"
-          >
+        <div className="px-5 py-3.5 border-t border-[var(--color-border-light)] flex justify-end gap-2">
+          <button onClick={() => setIsOpen(false)} className="btn btn-secondary">
             Close
           </button>
           <button
             onClick={insertToc}
             disabled={items.length === 0}
-            className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+            className="btn btn-primary disabled:opacity-40 disabled:cursor-not-allowed"
           >
             Insert TOC
           </button>
         </div>
       </div>
-    </div>
+    </>
   )
 }

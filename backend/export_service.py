@@ -1,6 +1,7 @@
 import os
 import re
-import tempfile
+import io
+import base64
 import docx
 from docx import Document
 from docx.shared import Pt, Inches, Cm, RGBColor
@@ -12,11 +13,10 @@ def export_docx(html_content: str, filename: str = "document.docx") -> str:
     """Convert HTML content to a DOCX file with proper formatting."""
     doc = Document()
 
-    # Set default font
-    style = doc.styles['Normal']
-    font = style.font
-    font.name = 'Times New Roman'
-    font.size = Pt(12)
+    _setup_document_styles(doc)
+
+    # Add page numbers in footer
+    _add_page_number_footer(doc)
 
     # Parse and add content
     blocks = _parse_html_sequential(html_content)
@@ -31,13 +31,188 @@ def export_docx(html_content: str, filename: str = "document.docx") -> str:
     return filepath
 
 
-def export_docx_to_bytes(html_content: str) -> bytes:
-    """Export to bytes for download endpoint."""
-    filepath = export_docx(html_content, f"_temp_{os.getpid()}.docx")
-    with open(filepath, 'rb') as f:
-        data = f.read()
-    os.unlink(filepath)
-    return data
+def export_docx_to_bytes(html_content: str, page_settings: dict | None = None) -> bytes:
+    """Export to bytes for download endpoint (in-memory, no temp file)."""
+    doc = Document()
+
+    _setup_document_styles(doc)
+
+    # Apply page settings if provided
+    if page_settings:
+        _apply_page_settings(doc, page_settings)
+
+    _add_page_number_footer(doc)
+
+    blocks = _parse_html_sequential(html_content)
+    for block in blocks:
+        _add_block(doc, block)
+
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    return buffer.getvalue()
+
+
+def _set_style_fonts(rpr, ascii_font: str, ea_font: str):
+    """Point a style's rPr at explicit fonts, dropping theme font references
+    (theme attrs would otherwise win over the explicit ones)."""
+    from docx.oxml import OxmlElement
+
+    rfonts = rpr.find(qn('w:rFonts'))
+    if rfonts is None:
+        rfonts = OxmlElement('w:rFonts')
+        rpr.insert(0, rfonts)
+    rfonts.set(qn('w:ascii'), ascii_font)
+    rfonts.set(qn('w:hAnsi'), ascii_font)
+    rfonts.set(qn('w:eastAsia'), ea_font)
+    for attr in ('w:asciiTheme', 'w:hAnsiTheme', 'w:eastAsiaTheme', 'w:cstheme'):
+        rfonts.attrib.pop(qn(attr), None)
+
+
+def _set_style_color_black(rpr):
+    """Force a style's text color to black, removing theme color attributes
+    (w:themeColor takes precedence over w:val if left in place)."""
+    from docx.oxml import OxmlElement
+
+    color = rpr.find(qn('w:color'))
+    if color is None:
+        color = OxmlElement('w:color')
+        rpr.append(color)
+    color.set(qn('w:val'), '000000')
+    for attr in ('w:themeColor', 'w:themeShade', 'w:themeTint'):
+        color.attrib.pop(qn(attr), None)
+
+
+def _setup_document_styles(doc):
+    """Redefine the template's built-in styles so the exported file matches
+    what the editor renders.
+
+    python-docx's default template uses Word's look, not ours:
+    - Heading 1/2 are blue (accent1 theme color) -> force black.
+    - Heading styles carry keepNext/keepLines, which makes WPS/Word draw a
+      small (non-printing) dot before every heading -> remove them.
+    - Body defaults to Calibri/single spacing -> Times New Roman, 1.5 lines,
+      6pt after, matching the .ProseMirror CSS.
+    """
+    normal = doc.styles['Normal']
+    normal.font.name = 'Times New Roman'
+    normal.font.size = Pt(12)
+    normal.paragraph_format.line_spacing = 1.5
+    normal.paragraph_format.space_after = Pt(6)
+    _set_style_fonts(normal.element.get_or_add_rPr(), 'Times New Roman', '宋体')
+
+    # Sizes mirror the editor CSS: h1 2em / h2 1.5em / h3 1.25em of 12pt
+    for name, size in (('Heading 1', 24), ('Heading 2', 18), ('Heading 3', 15)):
+        try:
+            st = doc.styles[name]
+        except KeyError:
+            continue
+        st.font.name = 'Times New Roman'
+        st.font.size = Pt(size)
+        st.font.bold = True
+        rpr = st.element.get_or_add_rPr()
+        _set_style_fonts(rpr, 'Times New Roman', '宋体')
+        _set_style_color_black(rpr)
+        ppr = st.element.find(qn('w:pPr'))
+        if ppr is not None:
+            for tag in ('w:keepNext', 'w:keepLines'):
+                el = ppr.find(qn(tag))
+                if el is not None:
+                    ppr.remove(el)
+        pf = st.paragraph_format
+        pf.space_before = Pt(12)
+        pf.space_after = Pt(4)
+        pf.line_spacing = 1.5
+
+
+def _parse_dimension(value: str) -> float | None:
+    """Parse a CSS dimension string (e.g. '25.4mm', '1in') to Cm."""
+    if not value:
+        return None
+    value = value.strip()
+    if value.endswith('mm'):
+        return float(value[:-2]) / 10
+    elif value.endswith('cm'):
+        return float(value[:-2])
+    elif value.endswith('in'):
+        return float(value[:-2]) * 2.54
+    elif value.endswith('pt'):
+        return float(value[:-2]) / 72 * 2.54
+    return None
+
+
+def _apply_page_settings(doc, settings: dict):
+    """Apply page size and margins from frontend settings to the document."""
+    section = doc.sections[0]
+    width = _parse_dimension(settings.get('width', ''))
+    height = _parse_dimension(settings.get('minHeight', '') or settings.get('height', ''))
+    if width:
+        section.page_width = Cm(width)
+    if height:
+        section.page_height = Cm(height)
+
+    top = _parse_dimension(settings.get('paddingTop', '') or settings.get('marginTop', ''))
+    bottom = _parse_dimension(settings.get('paddingBottom', '') or settings.get('marginBottom', ''))
+    left = _parse_dimension(settings.get('paddingLeft', '') or settings.get('marginLeft', ''))
+    right = _parse_dimension(settings.get('paddingRight', '') or settings.get('marginRight', ''))
+    if top is not None:
+        section.top_margin = Cm(top)
+    if bottom is not None:
+        section.bottom_margin = Cm(bottom)
+    if left is not None:
+        section.left_margin = Cm(left)
+    if right is not None:
+        section.right_margin = Cm(right)
+
+
+def _add_page_number_footer(doc):
+    """Add automatic page numbering to the document footer."""
+    from docx.oxml import OxmlElement
+
+    section = doc.sections[0]
+    footer = section.footer
+    footer.is_linked_to_previous = False
+    p = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    # PAGE field
+    run = p.add_run()
+    fldChar1 = OxmlElement('w:fldChar')
+    fldChar1.set(qn('w:fldCharType'), 'begin')
+    run._element.append(fldChar1)
+
+    run2 = p.add_run()
+    instrText = OxmlElement('w:instrText')
+    instrText.set(qn('xml:space'), 'preserve')
+    instrText.text = ' PAGE '
+    run2._element.append(instrText)
+
+    run3 = p.add_run()
+    fldChar2 = OxmlElement('w:fldChar')
+    fldChar2.set(qn('w:fldCharType'), 'end')
+    run3._element.append(fldChar2)
+
+
+def _extract_tag_content(html: str, tag: str, start: int) -> tuple[str, int] | None:
+    """Extract content between opening tag (already consumed) and matching close tag.
+    Returns (content, position_after_close_tag) or None."""
+    depth = 1
+    i = start
+    open_pattern = re.compile(rf'<{tag}[\s>/]')
+    close_tag = f'</{tag}>'
+    while i < len(html) and depth > 0:
+        # Check for close tag
+        if html[i:i+len(close_tag)] == close_tag:
+            depth -= 1
+            if depth == 0:
+                return (html[start:i], i + len(close_tag))
+            i += len(close_tag)
+        # Check for nested open tag
+        elif open_pattern.match(html[i:]):
+            depth += 1
+            i += 1
+        else:
+            i += 1
+    return None
 
 
 def _parse_html_sequential(html: str) -> list:
@@ -45,12 +220,41 @@ def _parse_html_sequential(html: str) -> list:
     blocks = []
     html = re.sub(r'<(script|style)[^>]*>.*?</\1>', '', html, flags=re.DOTALL)
 
-    # Match block-level elements in order
-    pattern = r'<(h[1-6]|p|ul|ol|table|blockquote|div)([^>]*)>(.*?)</\1>'
-    for match in re.finditer(pattern, html, re.DOTALL):
-        tag = match.group(1)
-        attrs = match.group(2)
-        content = match.group(3)
+    # Match block-level opening tags in order, with depth-aware content extraction.
+    # Longer tag names must precede shorter prefixes ('pre' before 'p',
+    # 'blockquote' before 'p'), otherwise '<pre>' is parsed as tag 'p' with
+    # bogus attribute 're'.
+    block_tags = r'h[1-6]|blockquote|pre|table|div|img|ul|ol|hr|p'
+    tag_pattern = re.compile(rf'<({block_tags})([^>]*)(/?)>', re.DOTALL)
+
+    pos = 0
+    while pos < len(html):
+        m = tag_pattern.search(html, pos)
+        if not m:
+            break
+        tag = m.group(1)
+        attrs = m.group(2)
+        self_closing = m.group(3) == '/'
+
+        # Handle self-closing tags (img, br, hr)
+        if self_closing or tag == "img" or tag == "hr":
+            if tag == "img":
+                src_match = re.search(r'src="([^"]*)"', attrs)
+                if src_match:
+                    blocks.append({"tag": "img", "src": src_match.group(1), "text": "", "runs": []})
+            elif tag == "hr":
+                blocks.append({"tag": "hr", "text": "", "runs": []})
+            pos = m.end()
+            continue
+
+        # Find matching close tag with depth tracking
+        content_start = m.end()
+        content = _extract_tag_content(html, tag, content_start)
+        if content is None:
+            pos = m.end()
+            continue
+        content_text, end_pos = content
+        pos = end_pos
 
         # Handle page break divs
         if tag == "div" and 'data-page-break' in attrs:
@@ -60,9 +264,9 @@ def _parse_html_sequential(html: str) -> list:
         block = {
             "tag": tag,
             "attrs": attrs,
-            "runs": _parse_runs(content),
-            "text": re.sub(r'<[^>]+>', '', content).strip(),
-            "raw_content": content,
+            "runs": _parse_runs(content_text) if tag not in ("ul", "ol", "table") else [],
+            "text": re.sub(r'<[^>]+>', '', content_text).strip(),
+            "raw_content": content_text,
         }
 
         # Parse alignment from style
@@ -86,18 +290,7 @@ def _parse_html_sequential(html: str) -> list:
     expanded = []
     for block in blocks:
         if block["tag"] in ("ul", "ol"):
-            items = re.findall(r'<li[^>]*>(.*?)</li>', block.get("raw_content", ""), re.DOTALL)
-            if not items:
-                items = [block["text"]]
-            for item in items:
-                text = re.sub(r'<[^>]+>', '', item).strip()
-                if text:
-                    expanded.append({
-                        "tag": "li",
-                        "list_type": block["tag"],
-                        "text": text,
-                        "runs": [{"text": text}],
-                    })
+            _expand_list(block["tag"], block.get("raw_content", ""), expanded)
         else:
             expanded.append(block)
 
@@ -112,12 +305,104 @@ def _parse_html_sequential(html: str) -> list:
     return expanded
 
 
+def _strip_nested_lists(html: str) -> str:
+    """Remove nested <ul>...</ul> and <ol>...</ol> blocks using depth-aware parsing."""
+    result = []
+    pos = 0
+    while pos < len(html):
+        m = re.search(r'<(ul|ol)[\s>]', html[pos:])
+        if not m:
+            result.append(html[pos:])
+            break
+        # Add everything before the list tag
+        result.append(html[pos:pos + m.start()])
+        # Find the matching close tag
+        tag = m.group(1)
+        tag_start = pos + m.start()
+        # Find the end of the opening tag
+        open_end = html.find('>', tag_start)
+        if open_end == -1:
+            break
+        content_result = _extract_tag_content(html, tag, open_end + 1)
+        if content_result:
+            _, end_pos = content_result
+            pos = end_pos
+        else:
+            # Can't parse, skip this character
+            result.append(html[tag_start])
+            pos = tag_start + 1
+    return "".join(result)
+
+
+def _expand_list(list_type: str, html: str, expanded: list, level: int = 0):
+    """Recursively expand list HTML into flat list items with indent level."""
+    # Match top-level <li> elements (non-greedy, handling nested lists)
+    pos = 0
+    while pos < len(html):
+        li_start = html.find('<li', pos)
+        if li_start == -1:
+            break
+        # Find the opening > of <li>
+        tag_end = html.find('>', li_start)
+        if tag_end == -1:
+            break
+        # Find matching </li> accounting for nested <li> tags
+        li_content_start = tag_end + 1
+        depth = 1
+        i = li_content_start
+        while i < len(html) and depth > 0:
+            if html[i:i+3] == '<li':
+                depth += 1
+                i += 3
+            elif html[i:i+5] == '</li>':
+                depth -= 1
+                if depth == 0:
+                    break
+                i += 5
+            else:
+                i += 1
+        li_content = html[li_content_start:i]
+        pos = i + 5  # skip past </li>
+
+        # Extract text content (strip nested lists from content)
+        # Use depth-aware extraction to remove nested <ul>/<ol> blocks
+        item_text_html = _strip_nested_lists(li_content)
+        # Strip <p> wrappers
+        item_text_html = re.sub(r'</?p[^>]*>', '', item_text_html)
+        text = re.sub(r'<[^>]+>', '', item_text_html).strip()
+
+        if text:
+            expanded.append({
+                "tag": "li",
+                "list_type": list_type,
+                "level": level,
+                "text": text,
+                "runs": _parse_runs(item_text_html),
+            })
+
+        # Check for nested lists within this <li>
+        nested_pos = 0
+        while nested_pos < len(li_content):
+            nested_start = re.search(r'<(ul|ol)[^>]*>', li_content[nested_pos:])
+            if not nested_start:
+                break
+            nested_tag = nested_start.group(1)
+            content_begin = nested_pos + nested_start.end()
+            nested_content_result = _extract_tag_content(li_content, nested_tag, content_begin)
+            if nested_content_result:
+                nested_inner, nested_end = nested_content_result
+                _expand_list(nested_tag, nested_inner, expanded, level + 1)
+                nested_pos = nested_end
+            else:
+                break
+
+
 def _parse_runs(html: str) -> list:
     """Parse inline elements into runs with formatting."""
     runs = []
 
-    # Split on inline formatting tags
-    segments = re.split(r'(<(?:strong|b|em|i|u|s|del|mark|span|a|br|sup|sub)[^>]*>|</(?:strong|b|em|i|u|s|del|mark|span|a|sup|sub)>)', html)
+    # Split on inline formatting tags (including img)
+    segments = re.split(r'(<(?:strong|b|em|i|u|s|del|mark|span|a|br|sup|sub|img)[^>]*>|</(?:strong|b|em|i|u|s|del|mark|span|a|sup|sub)>)', html)
 
     bold = False
     italic = False
@@ -129,6 +414,7 @@ def _parse_runs(html: str) -> list:
     color = None
     superscript = False
     subscript = False
+    link_href = None
 
     for seg in segments:
         if not seg:
@@ -157,10 +443,11 @@ def _parse_runs(html: str) -> list:
         elif seg == '</mark>':
             highlight = None
         elif seg.startswith('<a'):
-            # Links - just continue, text will be captured
-            pass
+            href_match = re.search(r'href="([^"]*)"', seg)
+            if href_match:
+                link_href = href_match.group(1)
         elif seg == '</a>':
-            pass
+            link_href = None
         elif seg == '<sup>':
             superscript = True
         elif seg == '</sup>':
@@ -188,6 +475,10 @@ def _parse_runs(html: str) -> list:
             color = None
         elif seg == '<br>' or seg == '<br/>':
             runs.append({"text": "\n"})
+        elif seg.startswith('<img'):
+            src_match = re.search(r'src="([^"]*)"', seg)
+            if src_match:
+                runs.append({"image_src": src_match.group(1)})
         elif not seg.startswith('<'):
             text = seg
             if not text.strip():
@@ -213,6 +504,8 @@ def _parse_runs(html: str) -> list:
                 run["superscript"] = True
             if subscript:
                 run["subscript"] = True
+            if link_href:
+                run["link"] = link_href
             runs.append(run)
 
     if not runs:
@@ -238,14 +531,61 @@ def _add_block(doc: Document, block: dict):
         run.add_break(docx.enum.text.WD_BREAK.PAGE)
         return
     elif tag == "li":
-        style = 'List Bullet' if block.get("list_type") == "ul" else 'List Number'
-        p = doc.add_paragraph(style=style)
+        level = block.get("level", 0)
+        if block.get("list_type") == "ul":
+            style = 'List Bullet' if level == 0 else f'List Bullet {level + 1}'
+        else:
+            style = 'List Number' if level == 0 else f'List Number {level + 1}'
+        # Fallback if style doesn't exist in template
+        try:
+            p = doc.add_paragraph(style=style)
+        except KeyError:
+            p = doc.add_paragraph(style='List Bullet' if block.get("list_type") == "ul" else 'List Number')
+            # Set indentation manually for nested items
+            if level > 0:
+                from docx.shared import Cm
+                p.paragraph_format.left_indent = Cm(1.27 * level)
         _add_runs_to_paragraph(p, block.get("runs", [{"text": block["text"]}]))
     elif tag == "blockquote":
         p = doc.add_paragraph(style='Quote')
         _add_runs_to_paragraph(p, block.get("runs", [{"text": block["text"]}]))
     elif tag == "table":
         _add_table_from_html(doc, block)
+    elif tag == "img":
+        _add_image_from_data_url(doc, block.get("src", ""))
+    elif tag == "hr":
+        # Horizontal rule as a thin bordered paragraph
+        p = doc.add_paragraph()
+        p.paragraph_format.space_before = Pt(6)
+        p.paragraph_format.space_after = Pt(6)
+        from docx.oxml import OxmlElement
+        pPr = p._element.get_or_add_pPr()
+        pBdr = OxmlElement('w:pBdr')
+        bottom = OxmlElement('w:bottom')
+        bottom.set(qn('w:val'), 'single')
+        bottom.set(qn('w:sz'), '6')
+        bottom.set(qn('w:space'), '1')
+        bottom.set(qn('w:color'), 'auto')
+        pBdr.append(bottom)
+        pPr.append(pBdr)
+        return
+    elif tag == "pre":
+        # Code block: monospace font with shading
+        code_text = re.sub(r'<[^>]+>', '', block.get("raw_content", block["text"]))
+        p = doc.add_paragraph()
+        p.paragraph_format.space_before = Pt(6)
+        p.paragraph_format.space_after = Pt(6)
+        run = p.add_run(code_text)
+        run.font.name = 'Courier New'
+        run.font.size = Pt(10)
+        # Add shading to simulate code block background
+        from docx.oxml import OxmlElement
+        rPr = run._element.get_or_add_rPr()
+        shd = OxmlElement('w:shd')
+        shd.set(qn('w:val'), 'clear')
+        shd.set(qn('w:fill'), 'F5F5F5')
+        rPr.append(shd)
+        return
     else:
         p = doc.add_paragraph()
         _add_runs_to_paragraph(p, block.get("runs", [{"text": block["text"]}]))
@@ -272,9 +612,27 @@ def _add_block(doc: Document, block: dict):
 def _add_runs_to_paragraph(paragraph, runs: list):
     """Add formatted runs to a paragraph."""
     for run_data in runs:
+        # Handle inline images
+        if run_data.get("image_src"):
+            src = run_data["image_src"]
+            if src.startswith("data:"):
+                match = re.match(r'data:image/[^;]+;base64,(.+)', src)
+                if match:
+                    image_data = base64.b64decode(match.group(1))
+                    image_stream = io.BytesIO(image_data)
+                    run = paragraph.add_run()
+                    run.add_picture(image_stream, width=Inches(5))
+            continue
+
         text = run_data.get("text", "")
         if not text:
             continue
+
+        # Handle hyperlinks
+        if run_data.get("link"):
+            _add_hyperlink(paragraph, text, run_data["link"], run_data)
+            continue
+
         run = paragraph.add_run(text)
         if run_data.get("bold"):
             run.bold = True
@@ -308,11 +666,25 @@ def _add_runs_to_paragraph(paragraph, runs: list):
 
 def _add_table_from_html(doc: Document, block: dict):
     """Parse and add an HTML table to the document."""
+    from docx.oxml import OxmlElement
+
     html = block.get("raw_content", block.get("text", ""))
     rows_data = []
     for tr_match in re.finditer(r'<tr[^>]*>(.*?)</tr>', html, re.DOTALL):
-        cells = re.findall(r'<(?:td|th)[^>]*>(.*?)</(?:td|th)>', tr_match.group(1), re.DOTALL)
-        cells = [re.sub(r'<[^>]+>', '', c).strip() for c in cells]
+        cells = []
+        for cell_match in re.finditer(r'<(td|th)([^>]*)>(.*?)</(?:td|th)>', tr_match.group(1), re.DOTALL):
+            attrs = cell_match.group(2)
+            content = re.sub(r'<[^>]+>', '', cell_match.group(3)).strip()
+            # Extract background color
+            bg_color = None
+            bg_match = re.search(r'background-color:\s*([^;"]+)', attrs)
+            if bg_match:
+                bg_color = bg_match.group(1).strip()
+            # Also check data-background-color attribute
+            data_bg = re.search(r'data-background-color="([^"]*)"', attrs)
+            if data_bg:
+                bg_color = data_bg.group(1)
+            cells.append({"text": content, "bg": bg_color, "is_header": cell_match.group(1) == "th"})
         if cells:
             rows_data.append(cells)
 
@@ -324,6 +696,73 @@ def _add_table_from_html(doc: Document, block: dict):
     table.style = 'Table Grid'
 
     for i, row in enumerate(rows_data):
-        for j, cell_text in enumerate(row):
+        for j, cell_data in enumerate(row):
             if j < max_cols:
-                table.cell(i, j).text = cell_text
+                cell = table.cell(i, j)
+                cell.text = cell_data["text"]
+                # Apply background color via shading
+                if cell_data.get("bg"):
+                    color_hex = cell_data["bg"].lstrip("#")
+                    if len(color_hex) == 6:
+                        shading = OxmlElement('w:shd')
+                        shading.set(qn('w:fill'), color_hex.upper())
+                        shading.set(qn('w:val'), 'clear')
+                        cell._tc.get_or_add_tcPr().append(shading)
+
+
+def _add_image_from_data_url(doc: Document, src: str):
+    """Add an image from a base64 data URL to the document."""
+    if not src.startswith("data:"):
+        return
+    # Parse data URL: data:<mime>;base64,<data>
+    match = re.match(r'data:image/[^;]+;base64,(.+)', src)
+    if not match:
+        return
+    image_data = base64.b64decode(match.group(1))
+    image_stream = io.BytesIO(image_data)
+    # Add image with a max width of 5 inches to fit page
+    p = doc.add_paragraph()
+    run = p.add_run()
+    run.add_picture(image_stream, width=Inches(5))
+
+
+def _add_hyperlink(paragraph, text: str, url: str, run_data: dict):
+    """Add a hyperlink to a paragraph using python-docx low-level XML."""
+    from docx.oxml import OxmlElement
+
+    # Create the relationship
+    part = paragraph.part
+    r_id = part.relate_to(url, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink", is_external=True)
+
+    # Create the w:hyperlink element
+    hyperlink = OxmlElement('w:hyperlink')
+    hyperlink.set(qn('r:id'), r_id)
+
+    # Create the run inside the hyperlink
+    new_run = OxmlElement('w:r')
+    rPr = OxmlElement('w:rPr')
+
+    # Style as a hyperlink (blue + underline)
+    color_el = OxmlElement('w:color')
+    color_el.set(qn('w:val'), '0563C1')
+    rPr.append(color_el)
+    u_el = OxmlElement('w:u')
+    u_el.set(qn('w:val'), 'single')
+    rPr.append(u_el)
+
+    # Apply additional formatting from run_data
+    if run_data.get("bold"):
+        rPr.append(OxmlElement('w:b'))
+    if run_data.get("italic"):
+        rPr.append(OxmlElement('w:i'))
+
+    new_run.append(rPr)
+
+    # Add the text
+    t = OxmlElement('w:t')
+    t.text = text
+    t.set(qn('xml:space'), 'preserve')
+    new_run.append(t)
+
+    hyperlink.append(new_run)
+    paragraph._element.append(hyperlink)

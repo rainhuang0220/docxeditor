@@ -27,6 +27,14 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": {
+      "../backend/__init__.py": "backend/__init__.py",
+      "../backend/main.py": "backend/main.py",
+      "../backend/ai_service.py": "backend/ai_service.py",
+      "../backend/export_service.py": "backend/export_service.py",
+      "../backend/import_service.py": "backend/import_service.py",
+      "../backend/requirements.txt": "backend/requirements.txt"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

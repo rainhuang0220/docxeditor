@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { FileText, ChevronRight } from 'lucide-react'
 import { useEditorContext } from '../context/EditorContext'
 
@@ -13,6 +13,7 @@ export function OutlinePanel() {
   const { editor } = useEditorContext()
   const [outline, setOutline] = useState<OutlineItem[]>([])
   const [isOpen, setIsOpen] = useState(true)
+  const [activeHeadingPos, setActiveHeadingPos] = useState<number | null>(null)
 
   useEffect(() => {
     if (!editor) return
@@ -37,29 +38,52 @@ export function OutlinePanel() {
     return () => { editor.off('update', updateOutline) }
   }, [editor])
 
+  // Track cursor position to highlight the nearest heading above
+  const updateActiveHeading = useCallback(() => {
+    if (!editor || outline.length === 0) return
+    const { from } = editor.state.selection
+    let closest: number | null = null
+    for (const item of outline) {
+      if (item.pos <= from) closest = item.pos
+      else break
+    }
+    setActiveHeadingPos(closest)
+  }, [editor, outline])
+
+  useEffect(() => {
+    if (!editor) return
+    editor.on('selectionUpdate', updateActiveHeading)
+    editor.on('update', updateActiveHeading)
+    updateActiveHeading()
+    return () => {
+      editor.off('selectionUpdate', updateActiveHeading)
+      editor.off('update', updateActiveHeading)
+    }
+  }, [editor, updateActiveHeading])
+
   if (!isOpen) {
     return (
       <button
         onClick={() => setIsOpen(true)}
-        className="w-8 h-full border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 flex items-start justify-center pt-3 hover:bg-gray-50 dark:hover:bg-gray-700"
+        className="chrome-panel w-8 h-full border-r border-[var(--color-border)] bg-[var(--color-surface)] flex items-start justify-center pt-3 hover:bg-[var(--color-surface-secondary)] transition-colors"
         title="Show Outline"
       >
-        <FileText size={16} className="text-gray-500" />
+        <FileText size={15} className="text-[var(--color-text-tertiary)]" />
       </button>
     )
   }
 
   return (
-    <div className="w-52 border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 flex flex-col overflow-hidden shrink-0">
-      <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200 dark:border-gray-700">
-        <span className="text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide">Outline</span>
-        <button onClick={() => setIsOpen(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
-          <ChevronRight size={14} />
+    <div className="chrome-panel w-52 border-r border-[var(--color-border)] bg-[var(--color-surface)] flex flex-col overflow-hidden shrink-0">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--color-border-light)]">
+        <span className="eyebrow">Outline</span>
+        <button onClick={() => setIsOpen(false)} className="p-0.5 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-tertiary)] transition-colors">
+          <ChevronRight size={13} />
         </button>
       </div>
-      <div className="flex-1 overflow-y-auto py-1">
+      <div className="flex-1 overflow-y-auto py-1.5">
         {outline.length === 0 ? (
-          <p className="px-3 py-2 text-xs text-gray-400">No headings found.</p>
+          <p className="px-3 py-4 text-xs text-[var(--color-text-muted)] text-center">No headings found</p>
         ) : (
           outline.map(item => (
             <button
@@ -68,13 +92,12 @@ export function OutlinePanel() {
                 if (!editor) return
                 editor.commands.focus()
                 editor.commands.setTextSelection(item.pos + 1)
-                // Scroll the editor to the heading
                 const domNode = editor.view.domAtPos(item.pos + 1)
                 if (domNode.node instanceof HTMLElement) {
                   domNode.node.scrollIntoView({ behavior: 'smooth', block: 'center' })
                 }
               }}
-              className="w-full text-left px-3 py-1 text-xs hover:bg-blue-50 dark:hover:bg-blue-900/30 text-gray-700 dark:text-gray-300 truncate"
+              className={`w-full text-left px-3 py-1.5 text-xs truncate transition-colors ${activeHeadingPos === item.pos ? 'bg-[var(--color-primary-light)] text-[var(--color-primary)] font-medium border-l-2 border-[var(--color-primary)]' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-secondary)] border-l-2 border-transparent'}`}
               style={{ paddingLeft: `${(item.level - 1) * 12 + 12}px` }}
             >
               {item.text}

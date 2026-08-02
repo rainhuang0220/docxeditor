@@ -21,6 +21,11 @@ function App() {
         e.preventDefault()
         window.dispatchEvent(new CustomEvent('editor:open-find-replace'))
       }
+      // Ctrl+H: open find & replace (focused on replace)
+      if ((e.metaKey || e.ctrlKey) && e.key === 'h') {
+        e.preventDefault()
+        window.dispatchEvent(new CustomEvent('editor:open-find-replace', { detail: { focusReplace: true } }))
+      }
       // Ctrl+S / Cmd+S: manual save version
       if ((e.metaKey || e.ctrlKey) && e.key === 's') {
         e.preventDefault()
@@ -43,7 +48,7 @@ function App() {
         <TableToolbar />
         <div className="flex flex-1 overflow-hidden">
           <OutlinePanel />
-          <div className="flex-1 overflow-y-auto bg-gray-100 dark:bg-gray-900 relative">
+          <div className="flex-1 overflow-y-auto editor-canvas relative">
             <FindReplaceBar />
             <SelectionMenu />
             <Editor />

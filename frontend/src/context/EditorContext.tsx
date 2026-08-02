@@ -39,6 +39,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
   const handleSetTitle = useCallback((title: string) => {
     setDocumentTitle(title)
     localStorage.setItem('ai-doc-ide-title', title)
+    document.title = `${title} - DocxEditor`
   }, [])
 
   const addMessage = useCallback((role: 'user' | 'assistant', content: string, streaming?: boolean) => {

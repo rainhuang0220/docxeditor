@@ -1,10 +1,10 @@
 import {
   Bold, Italic, Underline as UnderlineIcon, AlignLeft, AlignCenter,
   AlignRight, AlignJustify, List, ListOrdered, Undo2, Redo2,
-  Table as TableIcon, Image as ImageIcon, MessageSquare, Download,
+  Image as ImageIcon, MessageSquare, Download,
   Heading1, Heading2, Heading3, Upload, Palette,
   Strikethrough, Highlighter, Link, Printer, Indent, Outdent, Code,
-  Superscript, Subscript, SeparatorHorizontal, Quote,
+  Superscript, Subscript, SeparatorHorizontal, Quote, RemoveFormatting,
 } from 'lucide-react'
 import { useRef, useEffect, useState } from 'react'
 import { useEditorContext } from '../context/EditorContext'
@@ -14,6 +14,7 @@ import { ApiKeyDialog } from './ApiKeyDialog'
 import { FocusMode } from './FocusMode'
 import { TableOfContents } from './TableOfContents'
 import { PageSettingsDialog } from './PageSettingsDialog'
+import { InsertTableDialog } from './InsertTableDialog'
 import { apiUrl } from '../utils/api'
 import { showToast } from './Toast'
 
@@ -30,11 +31,15 @@ function ToolButton({ onClick, active, children, title }: {
       title={title}
       aria-label={title}
       aria-pressed={active}
-      className={`p-1.5 rounded hover:bg-gray-200 dark:hover:bg-gray-700 ${active ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400' : 'text-gray-700 dark:text-gray-300'}`}
+      className={`tool-btn w-[30px] h-[30px] grid place-items-center rounded-md ${active ? 'bg-[var(--color-primary-light)] text-[var(--color-primary)]' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-tertiary)] hover:text-[var(--color-text-primary)]'}`}
     >
       {children}
     </button>
   )
+}
+
+function Divider() {
+  return <div className="w-px h-[18px] bg-[var(--color-border)] mx-1.5 shrink-0" />
 }
 
 export function Toolbar() {
@@ -45,6 +50,19 @@ export function Toolbar() {
   const [showLinkInput, setShowLinkInput] = useState(false)
   const linkInputRef = useRef<HTMLInputElement>(null)
 
+  const getPageSettings = () => {
+    const page = document.querySelector('.document-page') as HTMLElement
+    if (!page) return undefined
+    return {
+      width: page.style.width || '210mm',
+      minHeight: page.style.minHeight || '297mm',
+      paddingTop: page.style.paddingTop || '25.4mm',
+      paddingBottom: page.style.paddingBottom || '25.4mm',
+      paddingLeft: page.style.paddingLeft || '25.4mm',
+      paddingRight: page.style.paddingRight || '25.4mm',
+    }
+  }
+
   // Listen for toggle-ai-panel and trigger-export events from keyboard shortcuts
   useEffect(() => {
     const handleToggleAI = () => toggleAIPanel()
@@ -52,10 +70,11 @@ export function Toolbar() {
       if (!editor) return
       const html = editor.getHTML()
       const filename = `${documentTitle.replace(/[^a-zA-Z0-9\u4e00-\u9fff_-]/g, '_')}.docx`
+      const pageSettings = getPageSettings()
       fetch(apiUrl('/api/export/download'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ html_content: html, filename }),
+        body: JSON.stringify({ html_content: html, filename, page_settings: pageSettings }),
       })
         .then(res => { if (!res.ok) throw new Error(); return res.blob() })
         .then(blob => {
@@ -65,6 +84,7 @@ export function Toolbar() {
           a.download = filename
           a.click()
           URL.revokeObjectURL(url)
+          showToast(`Exported "${filename}"`, 'success')
         })
         .catch(() => showToast('Export failed. Is the backend running?', 'error'))
     }
@@ -94,9 +114,9 @@ export function Toolbar() {
       const data = await res.json()
       if (data.html) {
         editor.commands.setContent(data.html)
-        // Set document title from filename
         const name = file.name.replace(/\.docx$/i, '')
         setDocumentTitle(name)
+        showToast(`Opened "${file.name}"`, 'success')
       }
     } catch {
       showToast('Import failed. Is the backend running?', 'error')
@@ -105,7 +125,7 @@ export function Toolbar() {
   }
 
   return (
-    <div className="flex items-center gap-1 px-3 py-1.5 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 flex-wrap" role="toolbar" aria-label="Document formatting">
+    <div className="flex items-center gap-0.5 px-3 py-1.5 border-b border-[var(--color-border)] bg-[var(--color-surface)] flex-wrap" role="toolbar" aria-label="Document formatting">
       <NewDocumentDialog />
 
       {/* Editable document title */}
@@ -113,17 +133,17 @@ export function Toolbar() {
         type="text"
         value={documentTitle}
         onChange={e => setDocumentTitle(e.target.value)}
-        className="h-7 text-sm border-none bg-transparent px-2 font-medium text-gray-700 dark:text-gray-200 focus:outline-none focus:bg-gray-100 dark:focus:bg-gray-700 rounded min-w-[120px] max-w-[200px]"
+        className="h-[30px] text-[13px] border border-transparent bg-transparent px-2 font-medium tracking-[-0.01em] text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-border)] focus:bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-secondary)] rounded-md min-w-[120px] max-w-[200px] transition-colors"
         title="Document title"
       />
 
-      <div className="w-px h-5 bg-gray-300 dark:bg-gray-600 mx-1" />
+      <Divider />
 
       {/* Font family */}
       <select
         value={editor.getAttributes('textStyle').fontFamily || 'Times New Roman'}
         onChange={e => editor.chain().focus().setFontFamily(e.target.value).run()}
-        className="h-7 text-sm border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded px-1"
+        className="toolbar-select"
       >
         <option value="Times New Roman">Times New Roman</option>
         <option value="Arial">Arial</option>
@@ -132,9 +152,9 @@ export function Toolbar() {
         <option value="Verdana">Verdana</option>
       </select>
 
-      {/* Font size placeholder */}
+      {/* Font size */}
       <select
-        className="h-7 text-sm border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded px-1 w-16"
+        className="toolbar-select w-[62px]"
         defaultValue="12"
         onChange={e => editor.chain().focus().setFontSize(`${e.target.value}pt`).run()}
       >
@@ -143,7 +163,7 @@ export function Toolbar() {
         ))}
       </select>
 
-      <div className="w-px h-5 bg-gray-300 dark:bg-gray-600 mx-1" />
+      <Divider />
 
       <ToolButton onClick={() => editor.chain().focus().toggleBold().run()} active={editor.isActive('bold')} title="Bold">
         <Bold size={16} />
@@ -160,6 +180,9 @@ export function Toolbar() {
       <ToolButton onClick={() => editor.chain().focus().toggleHighlight().run()} active={editor.isActive('highlight')} title="Highlight">
         <Highlighter size={16} />
       </ToolButton>
+      <ToolButton onClick={() => editor.chain().focus().unsetAllMarks().clearNodes().run()} title="Clear Formatting">
+        <RemoveFormatting size={16} />
+      </ToolButton>
       <div className="relative">
         <ToolButton onClick={() => {
           if (editor.isActive('link')) {
@@ -172,7 +195,7 @@ export function Toolbar() {
           <Link size={16} />
         </ToolButton>
         {showLinkInput && (
-          <div className="absolute top-full left-0 mt-1 z-30 flex items-center gap-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg shadow-lg p-1.5">
+          <div className="menu-surface anim-pop absolute top-full left-0 mt-1.5 z-30 flex items-center gap-1.5 p-1.5">
             <input
               ref={linkInputRef}
               type="url"
@@ -189,7 +212,7 @@ export function Toolbar() {
                 }
               }}
               placeholder="https://..."
-              className="w-48 text-xs border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded px-2 py-1 focus:outline-none focus:border-blue-500"
+              className="w-52 text-xs border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] rounded-md px-2.5 py-1.5 focus:outline-none focus:border-[var(--color-primary)] placeholder:text-[var(--color-text-muted)]"
             />
             <button
               onClick={() => {
@@ -199,7 +222,7 @@ export function Toolbar() {
                 setLinkUrl('')
                 setShowLinkInput(false)
               }}
-              className="text-xs px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
+              className="text-xs font-medium px-2.5 py-1.5 bg-[var(--color-primary)] text-white rounded-md hover:bg-[var(--color-primary-hover)] transition-colors"
             >
               OK
             </button>
@@ -220,7 +243,7 @@ export function Toolbar() {
         </ToolButton>
       </div>
 
-      <div className="w-px h-5 bg-gray-300 dark:bg-gray-600 mx-1" />
+      <Divider />
 
       <ToolButton onClick={() => editor.chain().focus().setTextAlign('left').run()} active={editor.isActive({ textAlign: 'left' })} title="Align Left">
         <AlignLeft size={16} />
@@ -235,7 +258,7 @@ export function Toolbar() {
         <AlignJustify size={16} />
       </ToolButton>
 
-      <div className="w-px h-5 bg-gray-300 dark:bg-gray-600 mx-1" />
+      <Divider />
 
       <ToolButton onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()} active={editor.isActive('heading', { level: 1 })} title="Heading 1">
         <Heading1 size={16} />
@@ -247,7 +270,7 @@ export function Toolbar() {
         <Heading3 size={16} />
       </ToolButton>
 
-      <div className="w-px h-5 bg-gray-300 dark:bg-gray-600 mx-1" />
+      <Divider />
 
       <ToolButton onClick={() => editor.chain().focus().toggleBulletList().run()} active={editor.isActive('bulletList')} title="Bullet List">
         <List size={16} />
@@ -262,7 +285,7 @@ export function Toolbar() {
         <Outdent size={16} />
       </ToolButton>
 
-      <div className="w-px h-5 bg-gray-300 dark:bg-gray-600 mx-1" />
+      <Divider />
 
       <ToolButton onClick={() => editor.chain().focus().toggleCodeBlock().run()} active={editor.isActive('codeBlock')} title="Code Block">
         <Code size={16} />
@@ -279,9 +302,7 @@ export function Toolbar() {
       <ToolButton onClick={() => editor.chain().focus().setPageBreak().run()} title="Page Break">
         <SeparatorHorizontal size={16} />
       </ToolButton>
-      <ToolButton onClick={() => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()} title="Insert Table">
-        <TableIcon size={16} />
-      </ToolButton>
+      <InsertTableDialog />
       <ToolButton onClick={() => {
         // Support both URL and local file upload
         const input = document.createElement('input')
@@ -302,11 +323,11 @@ export function Toolbar() {
         <ImageIcon size={16} />
       </ToolButton>
 
-      <div className="w-px h-5 bg-gray-300 dark:bg-gray-600 mx-1" />
+      <Divider />
 
       {/* Line spacing */}
       <select
-        className="h-7 text-xs border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded px-1"
+        className="toolbar-select"
         defaultValue="1.5"
         onChange={e => {
           const page = document.querySelector('.document-page .ProseMirror') as HTMLElement
@@ -349,11 +370,12 @@ export function Toolbar() {
       <ToolButton onClick={async () => {
         const html = editor.getHTML()
         const filename = `${documentTitle.replace(/[^a-zA-Z0-9\u4e00-\u9fff_-]/g, '_')}.docx`
+        const pageSettings = getPageSettings()
         try {
           const res = await fetch(apiUrl('/api/export/download'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ html_content: html, filename }),
+            body: JSON.stringify({ html_content: html, filename, page_settings: pageSettings }),
           })
           if (!res.ok) throw new Error('Export failed')
           const blob = await res.blob()
@@ -363,6 +385,7 @@ export function Toolbar() {
           a.download = filename
           a.click()
           URL.revokeObjectURL(url)
+          showToast(`Exported "${filename}"`, 'success')
         } catch {
           showToast('Export failed. Is the backend running?', 'error')
         }

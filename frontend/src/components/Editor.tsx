@@ -8,6 +8,22 @@ import ImageResize from 'tiptap-extension-resize-image'
 import { Table } from '@tiptap/extension-table'
 import { TableRow } from '@tiptap/extension-table-row'
 import { TableCell } from '@tiptap/extension-table-cell'
+
+const CustomTableCell = TableCell.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      backgroundColor: {
+        default: null,
+        parseHTML: element => element.getAttribute('data-background-color') || element.style.backgroundColor || null,
+        renderHTML: attributes => {
+          if (!attributes.backgroundColor) return {}
+          return { style: `background-color: ${attributes.backgroundColor}`, 'data-background-color': attributes.backgroundColor }
+        },
+      },
+    }
+  },
+})
 import { TableHeader } from '@tiptap/extension-table-header'
 import FontFamily from '@tiptap/extension-font-family'
 import Placeholder from '@tiptap/extension-placeholder'
@@ -19,9 +35,9 @@ import { FontSize } from '../extensions/FontSize'
 import { KeyboardShortcuts } from '../extensions/KeyboardShortcuts'
 import { ClipboardExtension } from '../extensions/ClipboardSupport'
 import { PageBreak } from '../extensions/PageBreak'
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useEditorContext } from '../context/EditorContext'
-import { loadDocument, setupAutoSave } from '../utils/storage'
+import { loadDocument, setupAutoSave, saveHeaderFooter, loadHeaderFooter } from '../utils/storage'
 import { apiUrl } from '../utils/api'
 import { showToast } from './Toast'
 
@@ -66,7 +82,7 @@ export function Editor() {
       ImageResize.configure({ inline: false }),
       Table.configure({ resizable: true }),
       TableRow,
-      TableCell,
+      CustomTableCell,
       TableHeader,
       FontFamily,
       FontSize,
@@ -80,6 +96,9 @@ export function Editor() {
       PageBreak,
     ],
     content: loadDocument() || defaultContent,
+    // Preserve whitespace runs (e.g. Chinese first-line indents typed as
+    // spaces) instead of collapsing them when content is parsed.
+    parseOptions: { preserveWhitespace: true },
     editorProps: {
       attributes: {
         spellcheck: 'true',
@@ -117,6 +136,8 @@ export function Editor() {
     setIsDragging(false)
     const file = e.dataTransfer.files[0]
     if (!file || !file.name.endsWith('.docx')) return
+    // Auto-save current state before replacing
+    window.dispatchEvent(new CustomEvent('editor:save-version', { detail: { description: 'Before import' } }))
     const formData = new FormData()
     formData.append('file', file)
     try {
@@ -125,11 +146,42 @@ export function Editor() {
       if (data.html && editor) {
         editor.commands.setContent(data.html)
         setDocumentTitle(file.name.replace(/\.docx$/i, ''))
+        showToast(`Opened "${file.name}"`, 'success')
       }
     } catch {
       showToast('Import failed. Is the backend running?', 'error')
     }
   }, [editor, setDocumentTitle])
+
+  // Header/footer persistence
+  const headerRef = useRef<HTMLDivElement>(null)
+  const footerRef = useRef<HTMLSpanElement>(null)
+  const pageRef = useRef<HTMLDivElement>(null)
+  const [headerFooter] = useState(() => loadHeaderFooter())
+  const [pageCount, setPageCount] = useState(1)
+
+  const saveHF = useCallback(() => {
+    const h = headerRef.current?.textContent || ''
+    const f = footerRef.current?.textContent || ''
+    saveHeaderFooter(h, f)
+  }, [])
+
+  // Estimate page count from content height
+  useEffect(() => {
+    if (!editor || !pageRef.current) return
+    const observer = new ResizeObserver(() => {
+      const el = pageRef.current
+      if (!el) return
+      // A4 page content height: 297mm - top/bottom padding
+      const pageHeightPx = el.clientHeight
+      const minHeightPx = parseFloat(getComputedStyle(el).minHeight) || pageHeightPx
+      const pages = Math.max(1, Math.ceil(pageHeightPx / minHeightPx))
+      setPageCount(pages)
+    })
+    const el = pageRef.current.querySelector('.ProseMirror')
+    if (el) observer.observe(el)
+    return () => observer.disconnect()
+  }, [editor])
 
   return (
     <div
@@ -139,22 +191,25 @@ export function Editor() {
       onDrop={handleDrop}
     >
       {isDragging && (
-        <div className="absolute inset-0 z-20 bg-blue-50/80 border-2 border-dashed border-blue-400 rounded-lg flex items-center justify-center">
-          <p className="text-blue-600 font-medium text-sm">Drop .docx file to import</p>
+        <div className="absolute inset-0 z-20 bg-[var(--color-primary-light)]/80 backdrop-blur-[2px] border-2 border-dashed border-[var(--color-primary)] rounded-lg flex items-center justify-center">
+          <p className="text-[var(--color-primary)] font-medium text-sm">Drop .docx file to import</p>
         </div>
       )}
       {/* Header */}
       <div
-        className="mx-auto mb-0 border-b border-gray-200 dark:border-gray-700 px-6 py-2 text-center text-xs text-gray-400"
+        ref={headerRef}
+        className="mx-auto mb-0 border-b border-[var(--color-border)] px-6 py-2 text-center text-[11px] text-[var(--color-text-muted)] font-[var(--font-sans)]"
         style={{ width: pageStyle.width }}
         contentEditable
         suppressContentEditableWarning
+        onBlur={saveHF}
       >
-        Document Header
+        {headerFooter.header || 'Document Header'}
       </div>
 
       {/* Main page */}
       <div
+        ref={pageRef}
         className="document-page"
         style={{
           width: pageStyle.width,
@@ -164,17 +219,32 @@ export function Editor() {
           paddingLeft: pageStyle.paddingLeft,
           paddingRight: pageStyle.paddingRight,
         }}
+        onMouseDown={e => {
+          // Clicking the blank page area (below the last paragraph) should
+          // place the caret at the end of the document, like Word does.
+          if (e.target === pageRef.current && editor && editor.isEditable) {
+            e.preventDefault()
+            editor.chain().focus('end').run()
+          }
+        }}
       >
         <EditorContent editor={editor} />
       </div>
 
       {/* Footer */}
       <div
-        className="mx-auto mt-0 border-t border-gray-200 dark:border-gray-700 px-6 py-2 flex justify-between text-xs text-gray-400"
+        className="mx-auto mt-0 border-t border-[var(--color-border)] px-6 py-2 flex justify-between text-[11px] text-[var(--color-text-muted)] font-[var(--font-sans)]"
         style={{ width: pageStyle.width }}
       >
-        <span contentEditable suppressContentEditableWarning>Footer text</span>
-        <span>Page 1</span>
+        <span
+          ref={footerRef}
+          contentEditable
+          suppressContentEditableWarning
+          onBlur={saveHF}
+        >
+          {headerFooter.footer || 'Footer text'}
+        </span>
+        <span>Page 1 of {pageCount}</span>
       </div>
     </div>
   )
