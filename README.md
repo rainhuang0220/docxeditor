@@ -1,8 +1,15 @@
 # DocxEditor
 
-AI 原生的文档编辑器桌面应用。基于 TipTap/ProseMirror 的富文本编辑，集成 AI 助手，用自然语言直接改文档——像 Cursor 改代码一样改 Word。
+AI 原生的文档编辑器桌面应用。基于 TipTap/ProseMirror 的富文本编辑，集成 AI 助手，用自然语言直接改文档——像 ~~Cursor~~ Eazo 改代码一样改 Word。
 
-**仓库**: [github.com/rainhuang0220/docxeditor](https://github.com/rainhuang0220/docxeditor)
+### 同系列toolkit
+
+| 工具 | 状态 | 简介 |
+|------|------|------|
+| PlainList | 🔨 进行中 (40%) | 计划清单 |
+| Flow | 🔨 进行中 (10%) | 会议 |
+| Untitled | 🔨幻想中 (0%) | 网盘 |
+| <u>***docxEditor(TBD)***</u> | 🔨进行中 (25%) | 文档编辑器 |
 
 ---
 
