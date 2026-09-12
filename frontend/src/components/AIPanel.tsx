@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { ArrowUp, X, Check, XCircle, Square, Sparkles, Loader2, ChevronDown, Plus, MessageSquare, FileText, Languages, Wand2, ListChecks, AlignLeft, Heading1 } from 'lucide-react'
 import { useEditorContext } from '../context/EditorContext'
 import { apiUrl } from '../utils/api'
+import { initialState, reduce, isLiveWriteTool, type ChatEvent, type Effect, type MachineState } from '../ai/streamMachine'
 import Markdown from 'react-markdown'
 import { diffWords } from 'diff'
 import { ThreadList } from './ThreadList'
@@ -29,8 +30,17 @@ interface LiveStream {
   flushTimer: number | null
 }
 
-/** Tools whose content is streamed live into the editor while the AI writes. */
-const LIVE_WRITE_TOOLS = new Set(['replace_content', 'insert_at_end'])
+function operationsCountOf(result: unknown): number {
+  if (!result || typeof result !== 'object') return 0
+  const ops = (result as { operations?: unknown }).operations
+  return Array.isArray(ops) ? ops.length : 0
+}
+
+function outcomeNote(effects: Effect[]): string {
+  return effects.includes('restore')
+    ? ' The document was restored.'
+    : ' The document was not changed.'
+}
 
 interface SlashCommand {
   id: string
@@ -135,6 +145,8 @@ export function AIPanel() {
   const abortRef = useRef<AbortController | null>(null)
   const liveRef = useRef<LiveStream | null>(null)
   const snapshotRef = useRef<string | null>(null)
+  const machineRef = useRef<MachineState>(initialState())
+  const streamGenRef = useRef(0)
   const charsRef = useRef(0)
   const modelMenuRef = useRef<HTMLDivElement>(null)
 
@@ -239,14 +251,8 @@ export function AIPanel() {
     return () => window.clearInterval(iv)
   }, [isSending])
 
-  /** Take one document snapshot per request (for reject/restore) and record a version. */
-  const ensureSnapshot = useCallback(() => {
-    if (snapshotRef.current !== null || !editor) return
-    snapshotRef.current = editor.getHTML()
-    window.dispatchEvent(new CustomEvent('editor:save-version', { detail: { description: 'Before AI edit' } }))
-  }, [editor])
-
   const flushLive = useCallback(() => {
+    if (machineRef.current.phase !== 'streaming') return
     const live = liveRef.current
     if (!live || !editor) return
     live.flushTimer = null
@@ -258,6 +264,7 @@ export function AIPanel() {
   }, [editor])
 
   const scheduleFlush = useCallback(() => {
+    if (machineRef.current.phase !== 'streaming') return
     const live = liveRef.current
     if (!live || live.flushTimer !== null) return
     live.flushTimer = window.setTimeout(flushLive, 120)
@@ -272,82 +279,88 @@ export function AIPanel() {
     editor?.setEditable(true)
   }, [editor])
 
-  /** Apply the final operations and open the review bar when confirmation is needed. */
-  const finishResult = useCallback((result: any, streamMsgId: string | null) => {
+  const presentAssistant = useCallback((result: any, streamMsgId: string | null) => {
     const ops: any[] = result.operations || []
     const warnings: string[] = result.warnings || []
-
     let displayReply = result.reply || (ops.length > 0 ? 'Done.' : 'No changes were needed.')
     if (warnings.length > 0) {
-      displayReply += '\n\n' + warnings.map(w => `⚠️ ${w}`).join('\n\n')
+      displayReply += '\n\n' + warnings.map((w: string) => `⚠️ ${w}`).join('\n\n')
     }
     if (streamMsgId) finalizeMessage(streamMsgId, displayReply)
     else addMessage('assistant', displayReply)
+  }, [addMessage, finalizeMessage])
 
+  const applyFinishedOps = useCallback((result: any) => {
     if (!editor) return
-    const wasLive = liveRef.current !== null
-    endStreamingUI()
-
-    if (ops.length === 0) {
-      // Streamed something but every operation was discarded (e.g. truncated) — restore
-      if (wasLive && snapshotRef.current !== null) {
-        editor.commands.setContent(snapshotRef.current, { parseOptions: { preserveWhitespace: true } })
-      }
-      snapshotRef.current = null
-      return
-    }
-
-    ensureSnapshot()
-    const snapshot = snapshotRef.current as string
-
+    const snapshot = snapshotRef.current
+    if (snapshot === null) return
+    const ops: any[] = result.operations || []
+    if (ops.length === 0) return
     const singleFullRewrite = ops.length === 1 && ops[0].type === 'replace_content'
     if (singleFullRewrite) {
-      // The live preview already shows ~this content; set the exact final version
       editor.commands.setContent(ops[0].content || '', { parseOptions: { preserveWhitespace: true } })
     } else {
-      // Always rebuild from the pre-edit snapshot, then apply every op.
-      // This keeps block indices valid even if a live preview or a partial
-      // earlier apply left the editor mid-state.
       editor.commands.setContent(snapshot, { emitUpdate: false, parseOptions: { preserveWhitespace: true } })
       applyOperationBatch(editor, ops)
     }
-
     if (result.requires_confirmation) {
       const diff = computeDiffStat(snapshot, editor.getHTML(), ops)
       setReview({ snapshot, diff })
     } else {
       snapshotRef.current = null
     }
-  }, [editor, addMessage, finalizeMessage, endStreamingUI, ensureSnapshot])
+  }, [editor])
+
+  const applyStreamEffects = useCallback((effects: Effect[], result?: any) => {
+    for (const effect of effects) {
+      if (effect === 'stopLive') endStreamingUI()
+      else if (effect === 'restore') {
+        if (editor && snapshotRef.current !== null) {
+          editor.commands.setContent(snapshotRef.current, { parseOptions: { preserveWhitespace: true } })
+        }
+      } else if (effect === 'applyResult') {
+        applyFinishedOps(result)
+      }
+    }
+  }, [editor, endStreamingUI, applyFinishedOps])
 
   const handleSendMessage = useCallback(async (message: string) => {
     if (!message.trim() || isSending) return
-    // Make sure the active model is on the backend before we send.
     await syncActiveModelToBackend()
     setInput('')
     // Starting a new request implicitly keeps any still-open review
     setReview(null)
-    snapshotRef.current = null
     charsRef.current = 0
     addMessage('user', message)
     setIsSending(true)
     setActivity({ label: 'Sending request' })
-    // If there is no active thread yet, create one seeded with the user
-    // message we just added so the conversation persists from the first
-    // turn.
     if (!activeThreadId) {
-      // Defer one tick so the addMessage setter has applied; messagesRef
-      // is updated synchronously inside addMessage, so reading it now
-      // already sees the new message.
       startNewThread()
     }
 
     const controller = new AbortController()
     abortRef.current = controller
     let streamMsgId: string | null = null
+    const generation = ++streamGenRef.current
+    machineRef.current = reduce(initialState(), { type: 'start' }).state
+
+    const dispatch = (event: ChatEvent) => {
+      if (streamGenRef.current !== generation) {
+        return { stale: true as const, prev: machineRef.current, state: machineRef.current, effects: [] as Effect[] }
+      }
+      const prev = machineRef.current
+      const out = reduce(prev, event)
+      machineRef.current = out.state
+      return { stale: false as const, prev, ...out }
+    }
 
     try {
       const documentContent = editor?.getHTML() || ''
+      snapshotRef.current = editor ? documentContent : null
+      if (editor) {
+        editor.setEditable(false)
+        window.dispatchEvent(new CustomEvent('editor:save-version', { detail: { description: 'Before AI edit' } }))
+      }
       const { from, to } = editor?.state.selection || { from: 0, to: 0 }
       const selectedText = editor && from !== to
         ? editor.state.doc.textBetween(from, to, ' ')
@@ -373,8 +386,20 @@ export function AIPanel() {
           body: payload,
           signal: controller.signal,
         })
+        if (!fallbackRes.ok) {
+          const out = dispatch({ type: 'error' })
+          if (!out.stale && out.prev.phase === 'streaming') {
+            applyStreamEffects(out.effects)
+            addMessage('assistant', `AI service returned ${fallbackRes.status}.${outcomeNote(out.effects)}`)
+          }
+          return
+        }
         const data = await fallbackRes.json()
-        finishResult(data, null)
+        const out = dispatch({ type: 'fallback', operationsCount: operationsCountOf(data) })
+        if (!out.stale && out.prev.phase === 'streaming') {
+          presentAssistant(data, null)
+          applyStreamEffects(out.effects, data)
+        }
         return
       }
 
@@ -385,6 +410,7 @@ export function AIPanel() {
       streamMsgId = addMessage('assistant', '', true)
 
       const handleSseLine = (line: string) => {
+        if (streamGenRef.current !== generation) return
         if (!line.startsWith('data: ')) return
         let event: any
         try {
@@ -393,6 +419,7 @@ export function AIPanel() {
 
         switch (event.type) {
           case 'status':
+            if (machineRef.current.phase !== 'streaming') break
             setActivity({
               label: event.stage === 'reading'
                 ? 'Reading document'
@@ -402,32 +429,36 @@ export function AIPanel() {
             })
             break
           case 'thinking':
+            if (machineRef.current.phase !== 'streaming') break
             setActivity({ label: 'Thinking' })
             break
           case 'chunk':
+            if (machineRef.current.phase !== 'streaming') break
             streamedReply += event.content
             updateMessage(streamMsgId!, streamedReply)
             setActivity(null)
             break
           case 'tool_start': {
+            const out = dispatch({ type: 'tool_start', name: String(event.name || '') })
+            if (out.stale || out.prev.phase !== 'streaming') break
             setActivity({ label: toolStartLabel(event.name) })
-            ensureSnapshot()
-            if (LIVE_WRITE_TOOLS.has(event.name) && editor && !liveRef.current) {
+            if (isLiveWriteTool(event.name) && editor && !liveRef.current) {
               liveRef.current = {
                 mode: event.name === 'replace_content' ? 'replace' : 'append',
-                base: event.name === 'insert_at_end' ? editor.getHTML() : '',
+                base: event.name === 'insert_at_end' ? (snapshotRef.current || '') : '',
                 buffer: '',
                 flushTimer: null,
               }
-              editor.setEditable(false)
               document.body.classList.add('ai-writing')
             }
             break
           }
           case 'tool_delta': {
+            const out = dispatch({ type: 'tool_delta', name: String(event.name || '') })
+            if (out.stale || out.prev.phase !== 'streaming') break
             charsRef.current += String(event.content || '').length
             const live = liveRef.current
-            if (live && LIVE_WRITE_TOOLS.has(event.name)) {
+            if (live && isLiveWriteTool(event.name)) {
               live.buffer += event.content
               scheduleFlush()
             }
@@ -435,20 +466,23 @@ export function AIPanel() {
             break
           }
           case 'tool_progress':
+            if (machineRef.current.phase !== 'streaming') break
             if (event.chars > charsRef.current) charsRef.current = event.chars
             setActivity(prev => ({ label: prev?.label || 'Working', detail: formatChars(charsRef.current) }))
             break
-          case 'done':
-            finishResult(event.result || {}, streamMsgId)
+          case 'done': {
+            const result = event.result || {}
+            const out = dispatch({ type: 'done', operationsCount: operationsCountOf(result) })
+            if (out.stale || out.prev.phase !== 'streaming') break
+            presentAssistant(result, streamMsgId)
+            applyStreamEffects(out.effects, result)
             break
+          }
           case 'error': {
-            const wasLive = liveRef.current !== null
-            endStreamingUI()
-            if (wasLive && editor && snapshotRef.current !== null) {
-              editor.commands.setContent(snapshotRef.current, { parseOptions: { preserveWhitespace: true } })
-            }
-            snapshotRef.current = null
-            finalizeMessage(streamMsgId!, `Error: ${event.content}`)
+            const out = dispatch({ type: 'error' })
+            if (out.stale || out.prev.phase !== 'streaming') break
+            applyStreamEffects(out.effects)
+            finalizeMessage(streamMsgId!, `Error: ${event.content}${outcomeNote(out.effects)}`)
             break
           }
         }
@@ -461,34 +495,41 @@ export function AIPanel() {
         }
         const lines = lineBuffer.split('\n')
         if (!done) {
-          // Keep the trailing partial line — SSE events end with \n.
           lineBuffer = lines.pop() || ''
         } else {
-          // Stream ended: flush any final event that lacked a trailing newline.
           lineBuffer = ''
         }
         for (const line of lines) handleSseLine(line)
         if (done) break
       }
-    } catch (e) {
-      const wasLive = liveRef.current !== null
-      endStreamingUI()
-      if (wasLive && editor && snapshotRef.current !== null) {
-        editor.commands.setContent(snapshotRef.current, { parseOptions: { preserveWhitespace: true } })
-        snapshotRef.current = null
+
+      const eof = dispatch({ type: 'eof' })
+      if (!eof.stale && eof.prev.phase === 'streaming') {
+        applyStreamEffects(eof.effects)
+        const failText = `The response was interrupted before it finished.${outcomeNote(eof.effects)}`
+        if (streamMsgId) finalizeMessage(streamMsgId, failText)
+        else addMessage('assistant', failText)
       }
-      const failText = e instanceof DOMException && e.name === 'AbortError'
-        ? (wasLive ? 'Request cancelled — document restored.' : 'Request cancelled.')
-        : 'Failed to connect to AI service. Make sure the backend is running.'
-      if (streamMsgId) finalizeMessage(streamMsgId, failText)
-      else addMessage('assistant', failText)
+    } catch (e) {
+      const isAbort = e instanceof DOMException && e.name === 'AbortError'
+      const out = dispatch({ type: isAbort ? 'abort' : 'error' })
+      if (!out.stale && out.prev.phase === 'streaming') {
+        applyStreamEffects(out.effects)
+        const failText = isAbort
+          ? `Request cancelled.${outcomeNote(out.effects)}`
+          : `Failed to connect to AI service. Make sure the backend is running.${outcomeNote(out.effects)}`
+        if (streamMsgId) finalizeMessage(streamMsgId, failText)
+        else addMessage('assistant', failText)
+      }
     } finally {
-      abortRef.current = null
-      setIsSending(false)
-      setActivity(null)
-      endStreamingUI()
+      if (streamGenRef.current === generation) {
+        abortRef.current = null
+        setIsSending(false)
+        setActivity(null)
+        endStreamingUI()
+      }
     }
-  }, [editor, isSending, messages, addMessage, updateMessage, finalizeMessage, setIsSending, ensureSnapshot, scheduleFlush, endStreamingUI, finishResult, syncActiveModelToBackend, activeThreadId, startNewThread])
+  }, [editor, isSending, messages, addMessage, updateMessage, finalizeMessage, setIsSending, scheduleFlush, endStreamingUI, presentAssistant, applyStreamEffects, syncActiveModelToBackend, activeThreadId, startNewThread])
 
   const handleSend = () => {
     if (cmdOpen) {
