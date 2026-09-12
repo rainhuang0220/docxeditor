@@ -5,7 +5,7 @@ import { useState } from 'react'
 import { apiUrl } from '../utils/api'
 
 export function SelectionMenu() {
-  const { editor, addMessage, setIsSending } = useEditorContext()
+  const { editor, addMessage, setIsSending, guardSession } = useEditorContext()
   const [showAIActions, setShowAIActions] = useState(false)
   const [showCaseMenu, setShowCaseMenu] = useState(false)
 
@@ -37,6 +37,7 @@ export function SelectionMenu() {
   const sendAIAction = async (action: string) => {
     const selected = getSelectedText()
     if (!selected) return
+    if (!guardSession('mutateDocument')) return
     setShowAIActions(false)
     const prompt = `${action}: "${selected}"`
     addMessage('user', prompt)

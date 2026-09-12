@@ -7,6 +7,16 @@ import {
   DEFAULT_MODEL_PROFILES,
   type ModelProfile, type StoredThread,
 } from '../utils/storage'
+import { showToast } from '../components/Toast'
+import {
+  REVIEW_BLOCK_MESSAGE,
+  initialReviewState,
+  persistableHtml,
+  reduceReview,
+  type ReviewEvent,
+  type ReviewReduceResult,
+  type SessionAction,
+} from '../ai/reviewTransaction'
 
 export interface Message {
   id: string
@@ -57,6 +67,13 @@ interface EditorContextType {
   setActiveModelId: (id: string) => void
   upsertModel: (profile: ModelProfile) => void
   deleteModel: (id: string) => void
+  /** True while an AI mutation is waiting for Accept/Reject. */
+  reviewPending: boolean
+  guardSession: (action: SessionAction) => boolean
+  dispatchReview: (event: ReviewEvent) => ReviewReduceResult
+  setReviewSnapshot: (html: string | null) => void
+  getPersistableDocumentHtml: () => string
+  isReviewPending: () => boolean
 }
 
 const EditorContext = createContext<EditorContextType | null>(null)
@@ -102,6 +119,35 @@ export function EditorProvider({ children }: { children: ReactNode }) {
   /* Models */
   const [models, setModels] = useState<ModelProfile[]>(() => loadModelProfiles())
   const [activeModelId, setActiveModelIdState] = useState<string>(() => loadActiveModelId())
+
+  const reviewRef = useRef(initialReviewState())
+  const reviewSnapshotRef = useRef<string | null>(null)
+  const [reviewPending, setReviewPending] = useState(false)
+
+  const dispatchReview = useCallback((event: ReviewEvent): ReviewReduceResult => {
+    const out = reduceReview(reviewRef.current, event)
+    reviewRef.current = out.state
+    setReviewPending(out.state.phase === 'pending')
+    return out
+  }, [])
+
+  const guardSession = useCallback((action: SessionAction) => {
+    const out = dispatchReview({ type: 'intend', action })
+    if (!out.allowed) {
+      showToast(REVIEW_BLOCK_MESSAGE, 'info')
+    }
+    return out.allowed
+  }, [dispatchReview])
+
+  const setReviewSnapshot = useCallback((html: string | null) => {
+    reviewSnapshotRef.current = html
+  }, [])
+
+  const isReviewPending = useCallback(() => reviewRef.current.phase === 'pending', [])
+
+  const getPersistableDocumentHtml = useCallback(() => {
+    return persistableHtml(reviewRef.current.phase, reviewSnapshotRef.current, editor?.getHTML() ?? '')
+  }, [editor])
 
   const handleSetTitle = useCallback((title: string) => {
     setDocumentTitle(title)
@@ -160,10 +206,12 @@ export function EditorProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const toggleAIPanel = useCallback(() => {
+    if (isAIPanelOpen && !guardSession('closePanel')) return
     setIsAIPanelOpen(prev => !prev)
-  }, [])
+  }, [isAIPanelOpen, guardSession])
 
   const startNewThread = useCallback((initialMessages?: Message[]): string => {
+    if (!guardSession('newChat')) return activeThreadId || ''
     const id = crypto.randomUUID()
     const now = new Date().toISOString()
     const activeModel = models.find(m => m.id === activeModelId) || models[0]
@@ -181,14 +229,16 @@ export function EditorProvider({ children }: { children: ReactNode }) {
     setActiveThreadId(id)
     saveActiveThreadId(id)
     return id
-  }, [models, activeModelId])
+  }, [models, activeModelId, guardSession, activeThreadId])
 
   const switchThread = useCallback((id: string) => {
+    if (!guardSession('switchThread')) return
     setActiveThreadId(id)
     saveActiveThreadId(id)
-  }, [])
+  }, [guardSession])
 
   const deleteThread = useCallback((id: string) => {
+    if (id === activeThreadId && !guardSession('deleteThread')) return
     setThreads(prev => {
       const next = prev.filter(t => t.id !== id)
       return next
@@ -200,7 +250,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       saveActiveThreadId(nextId)
       return nextId
     })
-  }, [threads])
+  }, [threads, activeThreadId, guardSession])
 
   /** Write the current messages list back to the active thread. */
   const persistCurrentThread = useCallback(() => {
@@ -230,9 +280,10 @@ export function EditorProvider({ children }: { children: ReactNode }) {
   }, [activeThreadId, activeModelId, models])
 
   const setActiveModelId = useCallback((id: string) => {
+    if (id !== activeModelId && !guardSession('switchModel')) return
     setActiveModelIdState(id)
     saveActiveModelId(id)
-  }, [])
+  }, [activeModelId, guardSession])
 
   const upsertModel = useCallback((profile: ModelProfile) => {
     setModels(prev => {
@@ -277,6 +328,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       activeThreadId,
       startNewThread, switchThread, deleteThread, persistCurrentThread,
       models, activeModelId, setActiveModelId, upsertModel, deleteModel,
+      reviewPending, guardSession, dispatchReview, setReviewSnapshot, getPersistableDocumentHtml, isReviewPending,
     }}>
       {children}
     </EditorContext.Provider>

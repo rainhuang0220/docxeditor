@@ -1,9 +1,7 @@
 /**
  * Document-safety state machine for one AIPanel SSE (or fallback) request.
- * Holds no HTML: snapshot text stays in the editor adapter.
+ * Holds no HTML. Pre-terminal events never imply a canonical document mutation.
  */
-
-const LIVE_WRITE_TOOLS = new Set(['replace_content', 'insert_at_end'])
 
 export type Phase =
   | 'idle'
@@ -23,20 +21,14 @@ export type ChatEvent =
   | { type: 'eof' }
   | { type: 'fallback'; operationsCount: number }
 
-export type Effect = 'stopLive' | 'restore' | 'applyResult' | 'markIncomplete'
+export type Effect = 'applyResult' | 'markIncomplete'
 
 export interface MachineState {
   phase: Phase
-  live: boolean
-  mutated: boolean
 }
 
 export function initialState(): MachineState {
-  return { phase: 'idle', live: false, mutated: false }
-}
-
-export function isLiveWriteTool(name: string): boolean {
-  return LIVE_WRITE_TOOLS.has(name)
+  return { phase: 'idle' }
 }
 
 export function reduce(state: MachineState, event: ChatEvent): {
@@ -45,7 +37,7 @@ export function reduce(state: MachineState, event: ChatEvent): {
 } {
   if (event.type === 'start') {
     if (state.phase !== 'idle') return { state, effects: [] }
-    return { state: { phase: 'streaming', live: false, mutated: false }, effects: [] }
+    return { state: { phase: 'streaming' }, effects: [] }
   }
 
   if (state.phase !== 'streaming') {
@@ -55,45 +47,18 @@ export function reduce(state: MachineState, event: ChatEvent): {
   switch (event.type) {
     case 'tool_start':
     case 'tool_delta':
-      return markLive(state, event.name)
+      return { state, effects: [] }
     case 'done':
     case 'fallback':
-      return succeed(state, event.operationsCount)
+      return {
+        state: { phase: 'completed' },
+        effects: event.operationsCount > 0 ? ['applyResult'] : [],
+      }
     case 'error':
-      return fail(state, 'failed')
+      return { state: { phase: 'failed' }, effects: [] }
     case 'abort':
-      return fail(state, 'aborted')
+      return { state: { phase: 'aborted' }, effects: [] }
     case 'eof':
-      return fail(state, 'incomplete')
+      return { state: { phase: 'incomplete' }, effects: ['markIncomplete'] }
   }
-}
-
-function markLive(state: MachineState, name: string): { state: MachineState; effects: Effect[] } {
-  const live = isLiveWriteTool(name)
-  if (!live) return { state, effects: [] }
-  return {
-    state: { ...state, live: true, mutated: true },
-    effects: [],
-  }
-}
-
-function succeed(state: MachineState, operationsCount: number): { state: MachineState; effects: Effect[] } {
-  const next: MachineState = { ...state, phase: 'completed' }
-  if (operationsCount > 0) {
-    return { state: next, effects: ['stopLive', 'applyResult'] }
-  }
-  if (state.mutated) {
-    return { state: next, effects: ['stopLive', 'restore'] }
-  }
-  return { state: next, effects: ['stopLive'] }
-}
-
-function fail(
-  state: MachineState,
-  phase: 'failed' | 'aborted' | 'incomplete',
-): { state: MachineState; effects: Effect[] } {
-  const effects: Effect[] = ['stopLive']
-  if (state.mutated) effects.push('restore')
-  if (phase === 'incomplete') effects.push('markIncomplete')
-  return { state: { ...state, phase }, effects }
 }

@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "test": "node --test --experimental-strip-types src/ai/streamMachine.test.ts",
+    "test": "tsc -p tsconfig.test.json --noEmit && node --test --experimental-strip-types src/ai/*.test.ts",
     "preview": "vite preview",
     "tauri": "tauri"
   },

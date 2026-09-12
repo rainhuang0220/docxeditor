@@ -6,7 +6,7 @@ import { DiffView } from './DiffView'
 import type { StoredVersion } from '../utils/storage'
 
 export function VersionPanel() {
-  const { editor } = useEditorContext()
+  const { editor, guardSession, getPersistableDocumentHtml } = useEditorContext()
   const [versions, setVersions] = useState<StoredVersion[]>(() => loadVersions())
   const [isOpen, setIsOpen] = useState(false)
   const [diffVersion, setDiffVersion] = useState<StoredVersion | null>(null)
@@ -21,13 +21,14 @@ export function VersionPanel() {
       id: crypto.randomUUID(),
       timestamp: new Date().toISOString(),
       description,
-      content: editor.getHTML(),
+      content: getPersistableDocumentHtml(),
     }
     setVersions(prev => [newVersion, ...prev])
-  }, [editor])
+  }, [editor, getPersistableDocumentHtml])
 
   const restoreVersion = (version: StoredVersion) => {
     if (!editor) return
+    if (!guardSession('mutateDocument')) return
     saveVersion('Auto-save before restore')
     editor.commands.setContent(version.content)
   }

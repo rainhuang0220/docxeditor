@@ -10,27 +10,26 @@ function start(): MachineState {
   return apply(initialState(), { type: 'start' }).state
 }
 
-test('start → tool_delta → eof restores once', () => {
+test('start → tool_delta → eof is incomplete without restore', () => {
   let state = start()
   state = apply(state, { type: 'tool_delta', name: 'replace_content' }).state
   const eof = apply(state, { type: 'eof' })
   assert.equal(eof.state.phase, 'incomplete')
-  assert.deepEqual(eof.effects, ['stopLive', 'restore', 'markIncomplete'])
+  assert.deepEqual(eof.effects, ['markIncomplete'])
   const again = apply(eof.state, { type: 'eof' })
   assert.deepEqual(again.effects, [])
 })
 
-test('start → eof with no live write does not restore', () => {
+test('start → eof with no tools does not restore', () => {
   const eof = apply(start(), { type: 'eof' })
   assert.equal(eof.state.phase, 'incomplete')
-  assert.deepEqual(eof.effects, ['stopLive', 'markIncomplete'])
-  assert.equal(eof.effects.includes('restore'), false)
+  assert.deepEqual(eof.effects, ['markIncomplete'])
 })
 
 test('start → done(ops>0) → eof applies once and eof is a no-op', () => {
   const done = apply(start(), { type: 'done', operationsCount: 2 })
   assert.equal(done.state.phase, 'completed')
-  assert.deepEqual(done.effects, ['stopLive', 'applyResult'])
+  assert.deepEqual(done.effects, ['applyResult'])
   const eof = apply(done.state, { type: 'eof' })
   assert.deepEqual(eof.effects, [])
   assert.equal(eof.state.phase, 'completed')
@@ -43,38 +42,37 @@ test('start → done(ops>0) → error does not restore', () => {
   assert.equal(err.state.phase, 'completed')
 })
 
-test('start → error → done restores once and does not apply', () => {
+test('start → error → done does not apply', () => {
   let state = start()
   state = apply(state, { type: 'tool_start', name: 'replace_content' }).state
   const err = apply(state, { type: 'error' })
   assert.equal(err.state.phase, 'failed')
-  assert.deepEqual(err.effects, ['stopLive', 'restore'])
+  assert.deepEqual(err.effects, [])
   const done = apply(err.state, { type: 'done', operationsCount: 3 })
   assert.deepEqual(done.effects, [])
-  assert.equal(done.effects.includes('applyResult'), false)
 })
 
 test('start → done → done emits applyResult once', () => {
   const first = apply(start(), { type: 'done', operationsCount: 1 })
-  assert.deepEqual(first.effects, ['stopLive', 'applyResult'])
+  assert.deepEqual(first.effects, ['applyResult'])
   const second = apply(first.state, { type: 'done', operationsCount: 1 })
   assert.deepEqual(second.effects, [])
 })
 
-test('start → live → done(ops=0) restores', () => {
+test('start → tool_start → done(ops=0) does not restore', () => {
   let state = start()
   state = apply(state, { type: 'tool_start', name: 'insert_at_end' }).state
   const done = apply(state, { type: 'done', operationsCount: 0 })
   assert.equal(done.state.phase, 'completed')
-  assert.deepEqual(done.effects, ['stopLive', 'restore'])
+  assert.deepEqual(done.effects, [])
 })
 
-test('start → abort after live restores and marks aborted', () => {
+test('start → abort after tool_delta does not restore', () => {
   let state = start()
   state = apply(state, { type: 'tool_delta', name: 'replace_content' }).state
   const abort = apply(state, { type: 'abort' })
   assert.equal(abort.state.phase, 'aborted')
-  assert.deepEqual(abort.effects, ['stopLive', 'restore'])
+  assert.deepEqual(abort.effects, [])
 })
 
 test('start → abort after done is a no-op', () => {
@@ -87,21 +85,20 @@ test('start → abort after done is a no-op', () => {
 test('start → fallback(ops) emits applyResult once', () => {
   const fallback = apply(start(), { type: 'fallback', operationsCount: 2 })
   assert.equal(fallback.state.phase, 'completed')
-  assert.deepEqual(fallback.effects, ['stopLive', 'applyResult'])
+  assert.deepEqual(fallback.effects, ['applyResult'])
   const again = apply(fallback.state, { type: 'fallback', operationsCount: 2 })
   assert.deepEqual(again.effects, [])
 })
 
-test('start → fallback(0) with no live does not restore', () => {
+test('start → fallback(0) does not restore', () => {
   const fallback = apply(start(), { type: 'fallback', operationsCount: 0 })
   assert.equal(fallback.state.phase, 'completed')
-  assert.deepEqual(fallback.effects, ['stopLive'])
+  assert.deepEqual(fallback.effects, [])
 })
 
 test('tool_delta after a terminal is a no-op', () => {
   const failed = apply(start(), { type: 'error' })
   const delta = apply(failed.state, { type: 'tool_delta', name: 'replace_content' })
   assert.deepEqual(delta.effects, [])
-  assert.equal(delta.state.mutated, false)
   assert.equal(delta.state.phase, 'failed')
 })

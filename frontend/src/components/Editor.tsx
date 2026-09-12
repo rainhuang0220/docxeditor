@@ -51,7 +51,7 @@ interface PageStyle {
 }
 
 export function Editor() {
-  const { setEditor, setDocumentTitle } = useEditorContext()
+  const { setEditor, setDocumentTitle, getPersistableDocumentHtml, guardSession } = useEditorContext()
   const [pageStyle, setPageStyle] = useState<PageStyle>({
     width: '210mm',
     minHeight: '297mm',
@@ -109,9 +109,9 @@ export function Editor() {
   // Auto-save
   useEffect(() => {
     if (!editor) return
-    const cleanup = setupAutoSave(() => editor.getHTML())
+    const cleanup = setupAutoSave(() => getPersistableDocumentHtml())
     return cleanup
-  }, [editor])
+  }, [editor, getPersistableDocumentHtml])
 
   // Listen for page style changes
   useEffect(() => {
@@ -136,6 +136,7 @@ export function Editor() {
     setIsDragging(false)
     const file = e.dataTransfer.files[0]
     if (!file || !file.name.endsWith('.docx')) return
+    if (!guardSession('mutateDocument')) return
     // Auto-save current state before replacing
     window.dispatchEvent(new CustomEvent('editor:save-version', { detail: { description: 'Before import' } }))
     const formData = new FormData()
@@ -151,7 +152,7 @@ export function Editor() {
     } catch {
       showToast('Import failed. Is the backend running?', 'error')
     }
-  }, [editor, setDocumentTitle])
+  }, [editor, setDocumentTitle, guardSession])
 
   // Header/footer persistence
   const headerRef = useRef<HTMLDivElement>(null)

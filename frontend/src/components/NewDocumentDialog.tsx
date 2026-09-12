@@ -4,12 +4,13 @@ import { DOCUMENT_TEMPLATES } from '../templates/documents'
 import { useEditorContext } from '../context/EditorContext'
 
 export function NewDocumentDialog() {
-  const { editor, setDocumentTitle } = useEditorContext()
+  const { editor, setDocumentTitle, guardSession } = useEditorContext()
   const [isOpen, setIsOpen] = useState(false)
   const [confirmKey, setConfirmKey] = useState<string | null>(null)
 
   const applyTemplate = (key: string) => {
     if (!editor) return
+    if (!guardSession('mutateDocument')) return
     // Confirm if document has content
     const hasContent = editor.state.doc.textContent.trim().length > 50
     if (hasContent) {
@@ -20,6 +21,7 @@ export function NewDocumentDialog() {
   }
 
   const doApply = (key: string) => {
+    if (!guardSession('mutateDocument')) return
     const template = DOCUMENT_TEMPLATES[key as keyof typeof DOCUMENT_TEMPLATES]
     if (template) {
       editor!.commands.setContent(template.content)

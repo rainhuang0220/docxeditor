@@ -44,7 +44,7 @@ function Divider() {
 }
 
 export function Toolbar() {
-  const { editor, toggleAIPanel, documentTitle, setDocumentTitle } = useEditorContext()
+  const { editor, toggleAIPanel, documentTitle, setDocumentTitle, guardSession } = useEditorContext()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const colorInputRef = useRef<HTMLInputElement>(null)
   const [linkUrl, setLinkUrl] = useState('')
@@ -108,6 +108,10 @@ export function Toolbar() {
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
+    if (!guardSession('mutateDocument')) {
+      e.target.value = ''
+      return
+    }
     const formData = new FormData()
     formData.append('file', file)
     try {
