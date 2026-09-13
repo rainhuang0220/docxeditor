@@ -1,5 +1,10 @@
 # 项目开发总结
 
+> Historical MVP log. AI apply/undo/diff claims below are **stale**.
+> Current behavior: [`README.md`](./README.md), [`GPT-HANDOFF.md`](./GPT-HANDOFF.md), [`CHANGELOG.md`](./CHANGELOG.md).
+>
+> In particular: the document is not live-written during SSE; confirmable ops apply then Accept/Reject; invalid batches do not mutate; Ctrl+Z after Accept returns the pre-AI document; Reject does not leave the proposal on the undo stack.
+
 ## 今日完成的功能
 
 ### 核心编辑器
@@ -17,7 +22,7 @@
 ### AI 助手
 - 流式对话（SSE），markdown 渲染
 - 15 个原生 tool-calling 操作（替换内容、插入文本、格式化、建表等）
-- 破坏性操作前展示 diff 预览，accept/reject 工作流
+- 破坏性操作原子写入后 Accept / Reject（见仓库根 README；本节其余为 MVP 日记）
 - 同时支持 OpenAI 和 Anthropic API
 - 选区感知：AI 知道你选中了什么
 - 快捷建议按钮
@@ -39,7 +44,7 @@
 不是让 AI 输出 JSON 指令然后解析——而是使用 OpenAI/Anthropic 原生的 function calling 能力。AI 直接调用 `replace_content`、`insert_table` 等工具，可靠性远高于 prompt engineering 出来的 JSON。
 
 ### ProseMirror 事务操作
-AI 不是用 innerHTML 暴力替换——而是通过 ProseMirror transaction 操作文档，保留完整的 undo/redo 历史。这意味着用户随时可以 Ctrl+Z 撤销 AI 的修改。
+AI 通过 ProseMirror transaction 改文档。确认中的编辑会被锁住；Accept 后 Undo 回到 AI 之前；Reject 恢复快照且提案不得再出现在 Undo/Redo。
 
 ### DOCX 双向转换的复杂性
 这是整个项目里最难的部分。python-docx 只提供低级的 XML 操作，嵌套列表需要解析 `w:numPr` → 查找 `w:abstractNum` → 判断 `w:numFmt` 来确定是有序还是无序。表格单元格背景色要从 `w:shd` 的 `w:fill` 属性提取。图片要从 relationship 拿到 blob 再 base64 编码。
@@ -53,7 +58,7 @@ Tauri 2.x 是类似 Electron 的桌面应用框架，但用 Rust 写壳，体积
 
 ## 主观评价
 
-- **最满意的功能**：AI tool-calling + diff preview 的工作流。用户说"把标题加粗居中"，AI 调用工具，展示 before/after 对比，用户确认后应用——这个交互很自然。
+- **最满意的功能**：AI tool-calling 工作流。确认类编辑先原子写入，再 Accept / Reject。
 - **最难的部分**：DOCX 导入。Word 文档格式的复杂性远超预期，尤其是嵌套列表和混合格式的 run。
 - **需要改进的**：UI 质感。功能完整但视觉粗糙，缺乏打磨。这是接下来要重点做的事。
 
@@ -92,8 +97,8 @@ Spec 第 8 节定义了 MoonBit 的四大职责：
 | Spec 要求 | 实际做法 | 原因 |
 |---|---|---|
 | MoonBit 编译为 Wasm 嵌入前端 | 未引入 Wasm | MVP 阶段 JS 性能足够，Wasm 增加构建复杂度 |
-| Agent 多模式（Auto Execute / Confirmation） | 统一 diff 预览确认 | 简化实现；所有内容操作都走 accept/reject，避免分类出错 |
-| Agent 复杂指令需主动澄清 | AI 直接执行 + diff 展示 | 实践中发现让 AI 先做再让用户确认比反复问答体验更好 |
+| Agent 多模式（Auto Execute / Confirmation） | 部分操作自动保留，破坏性操作 Accept/Reject | 见 `reviewTransaction.ts` |
+| Agent 复杂指令需主动澄清 | 终端结果原子 apply，失败则不改文档 | 非法/中断失败封闭 |
 | 页眉页脚 / 页码 | 仅在 Editor 组件中做了静态占位 | DOCX 的页眉页脚需要 section-level 支持，TipTap 不原生支持，留给后续 |
 | `moonbit-core/` 目录结构 | 不存在 | 未引入 MoonBit |
 | Spec 提到的 `get_document()` / `get_selection()` 等 read tools | 通过前端 context 直接传递选区文本给 AI | 不需要单独的 read tool，选区上下文随 chat 请求一起发送即可 |

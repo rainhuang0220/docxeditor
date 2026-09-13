@@ -6,6 +6,10 @@ __pycache__/
 .env
 .DS_Store
 DocxEditor.app/
+*.dmg
 target/
 zips_aeye-website-template/
 src-tauri/target/
+withgpt/
+withgpt.zip
+

@@ -1,5 +1,9 @@
 # AI-Native Word IDE Development Specification
 
+> Historical planning document. It is not a description of the current tree.
+> The shipping stack is React + TipTap + FastAPI + Tauri. MoonBit/Wasm was not built.
+> Current AI mutation rules: [`GPT-HANDOFF.md`](./GPT-HANDOFF.md).
+
 ## Role
 
 You are a senior full-stack engineer and system architect.
