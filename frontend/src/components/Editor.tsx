@@ -36,6 +36,7 @@ import { KeyboardShortcuts } from '../extensions/KeyboardShortcuts'
 import { ClipboardExtension } from '../extensions/ClipboardSupport'
 import { PageBreak } from '../extensions/PageBreak'
 import { ReviewLock } from '../extensions/ReviewLock'
+import { DocumentRevision } from '../extensions/DocumentRevision'
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useEditorContext } from '../context/EditorContext'
 import { loadDocument, setupAutoSave, saveHeaderFooter, loadHeaderFooter } from '../utils/storage'
@@ -100,6 +101,7 @@ export function Editor() {
       ReviewLock.configure({
         isLocked: () => isReviewPendingRef.current(),
       }),
+      DocumentRevision,
     ],
     content: loadDocument() || defaultContent,
     // Preserve whitespace runs (e.g. Chinese first-line indents typed as

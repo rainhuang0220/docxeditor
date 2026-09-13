@@ -7,6 +7,10 @@ import { type ReviewEffect } from '../ai/reviewTransaction'
 import type { Node as PmNode } from '@tiptap/pm/model'
 import { authorizeRestoreTr } from '../ai/reviewLock'
 import { checkpointHistory, dispatchAsSingleHistoryEvent, rejectRestoreTr, type HistoryCheckpoint } from '../ai/reviewHistory'
+import { captureRequestContext, isMutatingResultStale, STALE_RESULT_MESSAGE, type RequestContext } from '../ai/requestContext'
+import { applyOperationBatch, planOperations } from '../ai/applyOperations'
+import { tryBeginRequest, finishRequest, getInFlightRequestId, IN_FLIGHT_MESSAGE } from '../ai/requestLatch'
+import { showToast } from './Toast'
 import Markdown from 'react-markdown'
 import { diffWords } from 'diff'
 import { ThreadList } from './ThreadList'
@@ -126,7 +130,7 @@ function computeDiffStat(snapshotHtml: string, liveHtml: string, ops: any[]): Di
 export function AIPanel() {
   const { messages, addMessage, updateMessage, finalizeMessage, isAIPanelOpen, toggleAIPanel, editor, isSending, setIsSending,
     activeThreadId, startNewThread, threads, persistCurrentThread, models, activeModelId, setActiveModelId, switchThread,
-    guardSession, dispatchReview, setReviewSnapshot, isReviewPending } = useEditorContext()
+    guardSession, dispatchReview, setReviewSnapshot, isReviewPending, getMessages, registerAIRequestHandlers } = useEditorContext()
   const [input, setInput] = useState('')
   const [review, setReview] = useState<ReviewState | null>(null)
   const [activity, setActivity] = useState<Activity | null>(null)
@@ -142,6 +146,7 @@ export function AIPanel() {
   const snapshotRef = useRef<string | null>(null)
   const snapshotDocRef = useRef<PmNode | null>(null)
   const histCheckpointRef = useRef<HistoryCheckpoint | null>(null)
+  const requestCtxRef = useRef<RequestContext | null>(null)
   const machineRef = useRef<MachineState>(initialState())
   const streamGenRef = useRef(0)
   const charsRef = useRef(0)
@@ -278,6 +283,7 @@ export function AIPanel() {
         snapshotRef.current = null
         snapshotDocRef.current = null
         histCheckpointRef.current = null
+        requestCtxRef.current = null
         setReviewSnapshot(null)
         editor?.setEditable(true)
         window.dispatchEvent(new CustomEvent('editor:save-version', { detail: { description: 'AI edit accepted' } }))
@@ -286,6 +292,7 @@ export function AIPanel() {
         snapshotRef.current = null
         snapshotDocRef.current = null
         histCheckpointRef.current = null
+        requestCtxRef.current = null
         setReviewSnapshot(null)
         editor?.setEditable(true)
         addMessage('assistant', 'Changes rejected — the document was restored.')
@@ -294,6 +301,7 @@ export function AIPanel() {
         snapshotRef.current = null
         snapshotDocRef.current = null
         histCheckpointRef.current = null
+        requestCtxRef.current = null
         setReviewSnapshot(null)
         editor?.setEditable(true)
       }
@@ -306,13 +314,28 @@ export function AIPanel() {
     if (snapshot === null) return
     const ops: any[] = result.operations || []
     if (ops.length === 0) return
+    const ctx = requestCtxRef.current
+    if (!ctx || isMutatingResultStale({
+      state: editor.state,
+      ctx,
+      liveRequestId: getInFlightRequestId(),
+      liveThreadId: activeThreadId,
+    })) {
+      addMessage('assistant', STALE_RESULT_MESSAGE)
+      return
+    }
+    const planned = planOperations(ops, ctx, editor.state.doc.content.size)
+    if (!planned.ok) {
+      addMessage('assistant', planned.reason)
+      return
+    }
     try {
       dispatchAsSingleHistoryEvent(editor.view, () => {
         const singleFullRewrite = ops.length === 1 && ops[0].type === 'replace_content'
         if (singleFullRewrite) {
           editor.commands.setContent(ops[0].content || '', { parseOptions: { preserveWhitespace: true } })
         } else {
-          applyOperationBatch(editor, ops)
+          applyOperationBatch(editor, ops, ctx)
         }
       })
     } catch {
@@ -328,7 +351,7 @@ export function AIPanel() {
       confirmable: result.requires_confirmation === true,
     })
     applyReviewEffects(reviewOut.effects, result)
-  }, [editor, dispatchReview, applyReviewEffects])
+  }, [editor, dispatchReview, applyReviewEffects, activeThreadId, addMessage])
 
   const applyStreamEffects = useCallback((effects: Effect[], result?: any) => {
     for (const effect of effects) {
@@ -336,18 +359,49 @@ export function AIPanel() {
     }
   }, [applyFinishedOps])
 
-  const handleSendMessage = useCallback(async (message: string) => {
-    if (!message.trim() || isSending) return
-    if (!guardSession('send')) return
+  const submitAIRequest = useCallback(async (opts: { message: string; source: 'panel' | 'selection'; anchor?: import('../ai/operationTarget').RequestAnchor }) => {
+    const message = opts.message
+    if (!message.trim()) return
+    const requestId = tryBeginRequest()
+    if (!requestId) {
+      showToast(IN_FLIGHT_MESSAGE, 'info')
+      return
+    }
+    if (!guardSession('send')) {
+      finishRequest(requestId)
+      return
+    }
+    let threadId = activeThreadId
+    if (!threadId) {
+      threadId = startNewThread(undefined, { ignoreInFlight: true })
+    }
+    const editorState = editor?.state
+    if (!editor || !editorState) {
+      finishRequest(requestId)
+      return
+    }
+    const ctx = captureRequestContext({
+      requestId,
+      source: opts.source,
+      state: editorState,
+      html: editor.getHTML(),
+      threadId,
+      modelId: activeModelId,
+      anchor: opts.anchor,
+    })
+    requestCtxRef.current = ctx
+    snapshotRef.current = ctx.documentHtml
+    snapshotDocRef.current = ctx.documentNode
+    histCheckpointRef.current = checkpointHistory(editorState)
+    setReviewSnapshot(ctx.documentHtml)
+    window.dispatchEvent(new CustomEvent('editor:save-version', { detail: { description: 'Before AI edit' } }))
+
     await syncActiveModelToBackend()
-    setInput('')
+    if (opts.source === 'panel') setInput('')
     charsRef.current = 0
     addMessage('user', message)
     setIsSending(true)
     setActivity({ label: 'Sending request' })
-    if (!activeThreadId) {
-      startNewThread()
-    }
 
     const controller = new AbortController()
     abortRef.current = controller
@@ -366,24 +420,11 @@ export function AIPanel() {
     }
 
     try {
-      const documentContent = editor?.getHTML() || ''
-      snapshotRef.current = editor ? documentContent : null
-      snapshotDocRef.current = editor ? editor.state.doc : null
-      histCheckpointRef.current = editor ? checkpointHistory(editor.state) : null
-      setReviewSnapshot(editor ? documentContent : null)
-      if (editor) {
-        editor.setEditable(false)
-        window.dispatchEvent(new CustomEvent('editor:save-version', { detail: { description: 'Before AI edit' } }))
-      }
-      const { from, to } = editor?.state.selection || { from: 0, to: 0 }
-      const selectedText = editor && from !== to
-        ? editor.state.doc.textBetween(from, to, ' ')
-        : ''
       const payload = JSON.stringify({
         message,
-        document: documentContent,
-        selection: selectedText,
-        history: messages.slice(-10).map(m => ({ role: m.role, content: m.content })),
+        document: ctx.documentHtml,
+        selection: ctx.anchor.selectedText,
+        history: getMessages().slice(-10).map(m => ({ role: m.role, content: m.content })),
       })
 
       const res = await fetch(apiUrl('/api/chat/stream'), {
@@ -527,9 +568,10 @@ export function AIPanel() {
         setIsSending(false)
         setActivity(null)
         endStreamingUI()
+        finishRequest(requestId)
       }
     }
-  }, [editor, isSending, messages, addMessage, updateMessage, finalizeMessage, setIsSending, endStreamingUI, presentAssistant, applyStreamEffects, syncActiveModelToBackend, activeThreadId, startNewThread, guardSession, setReviewSnapshot])
+  }, [editor, addMessage, updateMessage, finalizeMessage, setIsSending, endStreamingUI, presentAssistant, applyStreamEffects, syncActiveModelToBackend, activeThreadId, startNewThread, guardSession, setReviewSnapshot, getMessages, activeModelId])
 
   const handleSend = () => {
     if (cmdOpen) {
@@ -538,11 +580,11 @@ export function AIPanel() {
       const matches = SLASH_COMMANDS.filter(c => c.name.toLowerCase().startsWith(query) || c.id.startsWith(query))
       const cmd = matches[cmdIndex] || matches[0]
       if (cmd) {
-        handleSendMessage(cmd.prompt)
+        void submitAIRequest({ message: cmd.prompt, source: 'panel' })
         return
       }
     }
-    handleSendMessage(input.trim())
+    void submitAIRequest({ message: input.trim(), source: 'panel' })
   }
 
   /** Filter commands based on the query after the leading slash. */
@@ -553,6 +595,13 @@ export function AIPanel() {
       c.name.toLowerCase().startsWith(query) || c.id.startsWith(query) || c.description.toLowerCase().includes(query),
     )
   }, [input])
+
+  useEffect(() => {
+    registerAIRequestHandlers({
+      submit: opts => { void submitAIRequest(opts) },
+      abort: () => abortRef.current?.abort(),
+    })
+  }, [registerAIRequestHandlers, submitAIRequest])
 
   const acceptReview = () => {
     const out = dispatchReview({ type: 'accept' })
@@ -779,7 +828,7 @@ export function AIPanel() {
             {['Summarize', 'Fix grammar', 'Format headings', 'Make formal'].map(suggestion => (
               <button
                 key={suggestion}
-                onClick={() => handleSendMessage(suggestion)}
+                onClick={() => void submitAIRequest({ message: suggestion, source: 'panel' })}
                 className="px-2.5 py-1 font-mono text-[10.5px] uppercase tracking-[0.06em] font-medium text-[var(--color-text-secondary)] border border-[var(--color-border)] hover:border-[var(--color-accent-text)] hover:text-[var(--color-accent-text)] transition-colors"
               >
                 {suggestion}
@@ -858,7 +907,7 @@ export function AIPanel() {
                 return (
                   <button
                     key={cmd.id}
-                    onClick={() => handleSendMessage(cmd.prompt)}
+                    onClick={() => void submitAIRequest({ message: cmd.prompt, source: 'panel' })}
                     onMouseEnter={() => setCmdIndex(i)}
                     className={`cmd-item ${active ? 'is-active' : ''}`}
                   >
@@ -967,155 +1016,3 @@ function ReviewBar({ review, onAccept, onReject }: {
   )
 }
 
-/** Coerce model-supplied block indices (number or numeric string) to a finite int. */
-function asBlockIndex(value: unknown): number | null {
-  if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value)
-  if (typeof value === 'string' && value.trim() !== '') {
-    const n = Number(value)
-    if (Number.isFinite(n)) return Math.trunc(n)
-  }
-  return null
-}
-
-/** Find the document range of the top-level block with the given index. */
-function topLevelBlockRange(editor: any, index: number): { from: number; to: number } | null {
-  let cur = 0
-  let result: { from: number; to: number } | null = null
-  editor.state.doc.forEach((node: any, offset: number) => {
-    if (cur === index) result = { from: offset, to: offset + node.nodeSize }
-    cur++
-  })
-  return result
-}
-
-/**
- * Apply a batch of operations. Block-indexed operations are applied in
- * descending index order so that inserts/deletes don't shift the indices
- * of operations that haven't run yet (the model indexes the original doc).
- */
-function applyOperationBatch(editor: any, ops: any[]) {
-  const normalized = ops.map(op => {
-    const idx = asBlockIndex(op?.paragraph_index)
-    return idx === null ? op : { ...op, paragraph_index: idx }
-  })
-  const indexed = normalized
-    .filter(op => typeof op.paragraph_index === 'number')
-    .sort((a, b) => b.paragraph_index - a.paragraph_index)
-  const rest = normalized.filter(op => typeof op.paragraph_index !== 'number')
-  for (const op of indexed) applyOperation(editor, op)
-  for (const op of rest) applyOperation(editor, op)
-}
-
-function applyOperation(editor: any, op: any) {
-  switch (op.type) {
-    case 'replace_content':
-      editor.commands.setContent(op.content || '', { parseOptions: { preserveWhitespace: true } })
-      break
-    case 'insert_at_end':
-      editor.commands.focus('end')
-      editor.commands.insertContent(op.content)
-      break
-    case 'insert_at_cursor':
-      editor.commands.insertContent(op.content)
-      break
-    case 'insert_after_paragraph': {
-      const range = topLevelBlockRange(editor, op.paragraph_index ?? 0)
-      const pos = range ? range.to : editor.state.doc.content.size
-      editor.chain().insertContentAt(pos, op.content).run()
-      break
-    }
-    case 'replace_paragraph': {
-      const range = topLevelBlockRange(editor, op.paragraph_index ?? 0)
-      if (range) {
-        editor.chain().deleteRange(range).insertContentAt(range.from, op.content).run()
-      } else {
-        // Index out of bounds (model miscounted) — append instead of losing content
-        editor.chain().insertContentAt(editor.state.doc.content.size, op.content).run()
-      }
-      break
-    }
-    case 'delete_paragraph': {
-      const range = topLevelBlockRange(editor, op.paragraph_index ?? 0)
-      if (range) editor.chain().deleteRange(range).run()
-      break
-    }
-    case 'set_heading': {
-      const level = op.level || 1
-      editor.chain().focus().toggleHeading({ level }).run()
-      break
-    }
-    case 'set_bold':
-      editor.chain().focus().toggleBold().run()
-      break
-    case 'set_italic':
-      editor.chain().focus().toggleItalic().run()
-      break
-    case 'set_underline':
-      editor.chain().focus().toggleUnderline().run()
-      break
-    case 'set_strikethrough':
-      editor.chain().focus().toggleStrike().run()
-      break
-    case 'set_highlight':
-      editor.chain().focus().toggleHighlight().run()
-      break
-    case 'set_link':
-      if (op.href) editor.chain().focus().setLink({ href: op.href }).run()
-      break
-    case 'set_align':
-      editor.chain().focus().setTextAlign(op.alignment).run()
-      break
-    case 'set_font_family':
-      editor.chain().focus().setFontFamily(op.family).run()
-      break
-    case 'set_font_size':
-      editor.chain().focus().setFontSize(op.size).run()
-      break
-    case 'set_color':
-      editor.chain().focus().setColor(op.color).run()
-      break
-    case 'insert_table':
-      editor.chain().focus().insertTable({
-        rows: op.rows || 3,
-        cols: op.cols || 3,
-        withHeaderRow: true,
-      }).run()
-      break
-    case 'insert_image':
-      if (op.src) {
-        editor.chain().focus().setImage({ src: op.src, alt: op.alt || '' }).run()
-      }
-      break
-    case 'insert_horizontal_rule':
-      editor.chain().focus().setHorizontalRule().run()
-      break
-    case 'insert_blockquote':
-      editor.chain().focus().insertContent(`<blockquote><p>${op.content || ''}</p></blockquote>`).run()
-      break
-    case 'insert_list': {
-      const items = op.items || []
-      const listType = op.list_type === 'ordered' ? 'ol' : 'ul'
-      const html = `<${listType}>${items.map((i: string) => `<li><p>${i}</p></li>`).join('')}</${listType}>`
-      editor.chain().focus().insertContent(html).run()
-      break
-    }
-    case 'insert_code_block':
-      editor.chain().focus().toggleCodeBlock().run()
-      if (op.content) {
-        editor.commands.insertContent(op.content)
-      }
-      break
-    case 'replace_selection': {
-      const { from, to } = editor.state.selection
-      if (from !== to) {
-        editor.chain().focus().deleteRange({ from, to }).insertContentAt(from, op.content).run()
-      } else {
-        editor.commands.insertContent(op.content)
-      }
-      break
-    }
-    default:
-      console.warn('Unknown operation:', op.type)
-      break
-  }
-}

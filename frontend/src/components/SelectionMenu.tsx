@@ -2,19 +2,13 @@ import { BubbleMenu } from '@tiptap/react/menus'
 import { Bold, Italic, Underline as UnderlineIcon, AlignLeft, AlignCenter, AlignRight, Sparkles, CaseSensitive } from 'lucide-react'
 import { useEditorContext } from '../context/EditorContext'
 import { useState } from 'react'
-import { apiUrl } from '../utils/api'
 
 export function SelectionMenu() {
-  const { editor, addMessage, setIsSending, guardSession } = useEditorContext()
+  const { editor, openAIPanel, submitAIRequest } = useEditorContext()
   const [showAIActions, setShowAIActions] = useState(false)
   const [showCaseMenu, setShowCaseMenu] = useState(false)
 
   if (!editor) return null
-
-  const getSelectedText = () => {
-    const { from, to } = editor.state.selection
-    return editor.state.doc.textBetween(from, to, ' ')
-  }
 
   const transformCase = (mode: 'upper' | 'lower' | 'title' | 'sentence') => {
     const { from, to } = editor.state.selection
@@ -34,66 +28,18 @@ export function SelectionMenu() {
     setShowCaseMenu(false)
   }
 
-  const sendAIAction = async (action: string) => {
-    const selected = getSelectedText()
-    if (!selected) return
-    if (!guardSession('mutateDocument')) return
+  const sendAIAction = (action: string) => {
+    const { from, to } = editor.state.selection
+    if (from === to) return
+    const selectedText = editor.state.doc.textBetween(from, to, ' ')
+    if (!selectedText) return
     setShowAIActions(false)
-    const prompt = `${action}: "${selected}"`
-    addMessage('user', prompt)
-    setIsSending(true)
-    try {
-      const res = await fetch(apiUrl('/api/chat/stream'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: prompt,
-          document: editor.getHTML(),
-          selection: selected,
-          history: [],
-        }),
-      })
-      if (!res.ok) return
-      const reader = res.body?.getReader()
-      const decoder = new TextDecoder()
-      let full = ''
-      if (reader) {
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          full += decoder.decode(value, { stream: true })
-        }
-      }
-      // Parse final result from SSE
-      const lines = full.split('\n')
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue
-        try {
-          const event = JSON.parse(line.slice(6))
-          if (event.type === 'done' && event.result) {
-            if (event.result.reply) addMessage('assistant', event.result.reply)
-            if (event.result.operations?.length > 0) {
-              for (const op of event.result.operations) {
-                if (op.type === 'replace_content') {
-                  editor.commands.setContent(op.content)
-                } else if (op.type === 'replace_selection' || op.type === 'insert_at_cursor') {
-                  // Replace current selection with the new content
-                  const { from, to } = editor.state.selection
-                  if (from !== to) {
-                    editor.chain().focus().deleteRange({ from, to }).insertContentAt(from, op.content).run()
-                  } else {
-                    editor.commands.insertContent(op.content)
-                  }
-                } else if (op.type === 'replace_paragraph' || op.type === 'insert_at_end') {
-                  editor.commands.insertContent(op.content)
-                }
-              }
-            }
-          }
-        } catch { /* skip */ }
-      }
-    } catch { /* ignore */ }
-    finally { setIsSending(false) }
+    openAIPanel()
+    submitAIRequest({
+      message: `${action}: "${selectedText}"`,
+      source: 'selection',
+      anchor: { from, to, cursor: from, selectedText },
+    })
   }
 
   return (
@@ -143,7 +89,6 @@ export function SelectionMenu() {
 
       <div className="w-px h-4 bg-[var(--color-border)] mx-0.5" />
 
-      {/* Case transform */}
       <div className="relative">
         <BubbleButton onClick={() => { setShowCaseMenu(!showCaseMenu); setShowAIActions(false) }}>
           <CaseSensitive size={15} />

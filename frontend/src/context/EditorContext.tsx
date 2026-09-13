@@ -18,6 +18,8 @@ import {
   type ReviewReduceResult,
   type SessionAction,
 } from '../ai/reviewTransaction'
+import { IN_FLIGHT_MESSAGE, isRequestInFlight } from '../ai/requestLatch'
+import type { RequestAnchor } from '../ai/operationTarget'
 
 export interface Message {
   id: string
@@ -48,6 +50,14 @@ interface EditorContextType {
   clearMessages: () => void
   isAIPanelOpen: boolean
   toggleAIPanel: () => void
+  openAIPanel: () => void
+  getMessages: () => Message[]
+  submitAIRequest: (opts: { message: string; source: 'panel' | 'selection'; anchor?: RequestAnchor }) => void
+  abortAIRequest: () => void
+  registerAIRequestHandlers: (handlers: {
+    submit: (opts: { message: string; source: 'panel' | 'selection'; anchor?: RequestAnchor }) => void
+    abort: () => void
+  }) => void
   isSending: boolean
   setIsSending: (v: boolean) => void
   documentTitle: string
@@ -56,7 +66,7 @@ interface EditorContextType {
   threads: ThreadSummary[]
   activeThreadId: string | null
   /** Start a new blank thread and switch to it. Returns its id. */
-  startNewThread: () => string
+  startNewThread: (initialMessages?: Message[], opts?: { ignoreInFlight?: boolean }) => string
   switchThread: (id: string) => void
   deleteThread: (id: string) => void
   /** Persist the current message list into the active thread. Called after
@@ -78,6 +88,8 @@ interface EditorContextType {
 }
 
 const EditorContext = createContext<EditorContextType | null>(null)
+
+const IN_FLIGHT_BLOCKED: SessionAction[] = ['newChat', 'switchThread', 'switchModel', 'deleteThread', 'closePanel']
 
 function summarizeThread(t: StoredThread): ThreadSummary {
   return {
@@ -132,7 +144,11 @@ export function EditorProvider({ children }: { children: ReactNode }) {
     return out
   }, [])
 
-  const guardSession = useCallback((action: SessionAction) => {
+  const guardSession = useCallback((action: SessionAction, opts?: { ignoreInFlight?: boolean }) => {
+    if (!opts?.ignoreInFlight && isRequestInFlight() && IN_FLIGHT_BLOCKED.includes(action)) {
+      showToast(IN_FLIGHT_MESSAGE, 'info')
+      return false
+    }
     const out = dispatchReview({ type: 'intend', action })
     if (!out.allowed) {
       showToast(REVIEW_BLOCK_MESSAGE, 'info')
@@ -206,13 +222,39 @@ export function EditorProvider({ children }: { children: ReactNode }) {
     messagesRef.current = []
   }, [])
 
+  const openAIPanel = useCallback(() => {
+    setIsAIPanelOpen(true)
+  }, [])
+
   const toggleAIPanel = useCallback(() => {
     if (isAIPanelOpen && !guardSession('closePanel')) return
     setIsAIPanelOpen(prev => !prev)
   }, [isAIPanelOpen, guardSession])
 
-  const startNewThread = useCallback((initialMessages?: Message[]): string => {
-    if (!guardSession('newChat')) return activeThreadId || ''
+  const getMessages = useCallback(() => messagesRef.current, [])
+
+  const aiHandlersRef = useRef<{
+    submit: (opts: { message: string; source: 'panel' | 'selection'; anchor?: RequestAnchor }) => void
+    abort: () => void
+  } | null>(null)
+
+  const registerAIRequestHandlers = useCallback((handlers: {
+    submit: (opts: { message: string; source: 'panel' | 'selection'; anchor?: RequestAnchor }) => void
+    abort: () => void
+  }) => {
+    aiHandlersRef.current = handlers
+  }, [])
+
+  const submitAIRequest = useCallback((opts: { message: string; source: 'panel' | 'selection'; anchor?: RequestAnchor }) => {
+    aiHandlersRef.current?.submit(opts)
+  }, [])
+
+  const abortAIRequest = useCallback(() => {
+    aiHandlersRef.current?.abort()
+  }, [])
+
+  const startNewThread = useCallback((initialMessages?: Message[], opts?: { ignoreInFlight?: boolean }): string => {
+    if (!guardSession('newChat', opts)) return activeThreadId || ''
     const id = crypto.randomUUID()
     const now = new Date().toISOString()
     const activeModel = models.find(m => m.id === activeModelId) || models[0]
@@ -332,7 +374,8 @@ export function EditorProvider({ children }: { children: ReactNode }) {
     <EditorContext.Provider value={{
       editor, setEditor,
       messages, addMessage, updateMessage, finalizeMessage, clearMessages,
-      isAIPanelOpen, toggleAIPanel,
+      isAIPanelOpen, toggleAIPanel, openAIPanel, getMessages,
+      submitAIRequest, abortAIRequest, registerAIRequestHandlers,
       isSending, setIsSending,
       documentTitle, setDocumentTitle: handleSetTitle,
       threads: threadSummaries,
