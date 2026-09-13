@@ -35,6 +35,7 @@ import { FontSize } from '../extensions/FontSize'
 import { KeyboardShortcuts } from '../extensions/KeyboardShortcuts'
 import { ClipboardExtension } from '../extensions/ClipboardSupport'
 import { PageBreak } from '../extensions/PageBreak'
+import { ReviewLock } from '../extensions/ReviewLock'
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useEditorContext } from '../context/EditorContext'
 import { loadDocument, setupAutoSave, saveHeaderFooter, loadHeaderFooter } from '../utils/storage'
@@ -51,7 +52,9 @@ interface PageStyle {
 }
 
 export function Editor() {
-  const { setEditor, setDocumentTitle, getPersistableDocumentHtml, guardSession } = useEditorContext()
+  const { setEditor, setDocumentTitle, getPersistableDocumentHtml, guardSession, isReviewPending, reviewPending } = useEditorContext()
+  const isReviewPendingRef = useRef(isReviewPending)
+  isReviewPendingRef.current = isReviewPending
   const [pageStyle, setPageStyle] = useState<PageStyle>({
     width: '210mm',
     minHeight: '297mm',
@@ -94,6 +97,9 @@ export function Editor() {
       Subscript,
       Placeholder.configure({ placeholder: 'Start typing your document...' }),
       PageBreak,
+      ReviewLock.configure({
+        isLocked: () => isReviewPendingRef.current(),
+      }),
     ],
     content: loadDocument() || defaultContent,
     // Preserve whitespace runs (e.g. Chinese first-line indents typed as
@@ -201,7 +207,7 @@ export function Editor() {
         ref={headerRef}
         className="mx-auto mb-0 border-b border-[var(--color-page-rule)] px-6 py-2 text-center text-[11px] text-[#949494]"
         style={{ width: pageStyle.width }}
-        contentEditable
+        contentEditable={!reviewPending}
         suppressContentEditableWarning
         onBlur={saveHF}
       >
@@ -239,7 +245,7 @@ export function Editor() {
       >
         <span
           ref={footerRef}
-          contentEditable
+          contentEditable={!reviewPending}
           suppressContentEditableWarning
           onBlur={saveHF}
         >

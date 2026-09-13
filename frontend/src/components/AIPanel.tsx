@@ -4,6 +4,7 @@ import { useEditorContext } from '../context/EditorContext'
 import { apiUrl } from '../utils/api'
 import { initialState, reduce, type ChatEvent, type Effect, type MachineState } from '../ai/streamMachine'
 import { type ReviewEffect } from '../ai/reviewTransaction'
+import { REVIEW_LOCK_META } from '../ai/reviewLock'
 import Markdown from 'react-markdown'
 import { diffWords } from 'diff'
 import { ThreadList } from './ThreadList'
@@ -275,9 +276,6 @@ export function AIPanel() {
         editor?.setEditable(true)
         window.dispatchEvent(new CustomEvent('editor:save-version', { detail: { description: 'AI edit accepted' } }))
       } else if (effect === 'restore') {
-        if (editor && snapshotRef.current !== null) {
-          editor.commands.setContent(snapshotRef.current, { parseOptions: { preserveWhitespace: true } })
-        }
         setReview(null)
         snapshotRef.current = null
         setReviewSnapshot(null)
@@ -546,6 +544,26 @@ export function AIPanel() {
   }
 
   const rejectReview = () => {
+    if (!isReviewPending()) {
+      dispatchReview({ type: 'reject' })
+      return
+    }
+    const snapshot = snapshotRef.current
+    if (editor && snapshot !== null) {
+      editor.chain()
+        .command(({ tr }) => {
+          tr.setMeta(REVIEW_LOCK_META, { authorizeRestore: true })
+          return true
+        })
+        .run()
+      editor.chain()
+        .command(({ tr }) => {
+          tr.setMeta(REVIEW_LOCK_META, { restore: true })
+          return true
+        })
+        .setContent(snapshot, { parseOptions: { preserveWhitespace: true } })
+        .run()
+    }
     const out = dispatchReview({ type: 'reject' })
     applyReviewEffects(out.effects)
   }

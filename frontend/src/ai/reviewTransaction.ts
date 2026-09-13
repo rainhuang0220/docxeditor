@@ -85,3 +85,32 @@ export function persistableHtml(
   if (phase === 'pending' && snapshot !== null) return snapshot
   return editorHtml
 }
+
+export function planDeleteModel(input: {
+  models: readonly { id: string }[]
+  activeModelId: string
+  deleteId: string
+  review: ReviewState
+}): {
+  allowed: boolean
+  models: { id: string }[]
+  activeModelId: string
+  review: ReviewState
+} {
+  const models = [...input.models]
+  if (models.length <= 1) {
+    return { allowed: true, models, activeModelId: input.activeModelId, review: input.review }
+  }
+  if (input.deleteId === input.activeModelId && input.review.phase === 'pending') {
+    return { allowed: false, models, activeModelId: input.activeModelId, review: input.review }
+  }
+  const next = models.filter(m => m.id !== input.deleteId)
+  return {
+    allowed: true,
+    models: next,
+    activeModelId: input.deleteId === input.activeModelId
+      ? (next[0]?.id ?? input.activeModelId)
+      : input.activeModelId,
+    review: input.review,
+  }
+}

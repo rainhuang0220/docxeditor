@@ -12,6 +12,7 @@ import {
   REVIEW_BLOCK_MESSAGE,
   initialReviewState,
   persistableHtml,
+  planDeleteModel,
   reduceReview,
   type ReviewEvent,
   type ReviewReduceResult,
@@ -298,6 +299,16 @@ export function EditorProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const deleteModel = useCallback((id: string) => {
+    const plan = planDeleteModel({
+      models: models.map(m => ({ id: m.id })),
+      activeModelId,
+      deleteId: id,
+      review: { phase: reviewRef.current.phase },
+    })
+    if (!plan.allowed) {
+      showToast(REVIEW_BLOCK_MESSAGE, 'info')
+      return
+    }
     setModels(prev => {
       if (prev.length <= 1) return prev
       const next = prev.filter(m => m.id !== id)
@@ -308,7 +319,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       }
       return next
     })
-  }, [activeModelId])
+  }, [activeModelId, models])
 
   // Persist models whenever they change
   useEffect(() => {

@@ -5,6 +5,7 @@ import {
   guardReviewAction,
   initialReviewState,
   persistableHtml,
+  planDeleteModel,
   reduceReview,
   type ReviewEffect,
   type ReviewState,
@@ -258,4 +259,32 @@ test('pending review persistable HTML is the request snapshot, not the provision
   assert.equal(persistableHtml('pending', '', PROPOSED), '')
   assert.equal(persistableHtml('idle', null, PROPOSED), PROPOSED)
   assert.equal(persistableHtml('committed', null, PROPOSED), PROPOSED)
+})
+
+test('deleting active model while review pending → blocked', () => {
+  const review = { phase: 'pending' as const }
+  const out = planDeleteModel({
+    models: [{ id: 'a' }, { id: 'b' }],
+    activeModelId: 'a',
+    deleteId: 'a',
+    review,
+  })
+  assert.equal(out.allowed, false)
+  assert.deepEqual(out.models, [{ id: 'a' }, { id: 'b' }])
+  assert.equal(out.activeModelId, 'a')
+  assert.equal(out.review.phase, 'pending')
+})
+
+test('deleting inactive model while review pending → does not change active model or review state', () => {
+  const review = { phase: 'pending' as const }
+  const out = planDeleteModel({
+    models: [{ id: 'a' }, { id: 'b' }],
+    activeModelId: 'a',
+    deleteId: 'b',
+    review,
+  })
+  assert.equal(out.allowed, true)
+  assert.deepEqual(out.models, [{ id: 'a' }])
+  assert.equal(out.activeModelId, 'a')
+  assert.equal(out.review.phase, 'pending')
 })
