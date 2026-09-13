@@ -24,6 +24,7 @@ export type SessionAction =
   | 'closePanel'
   | 'deleteThread'
   | 'mutateDocument'
+  | 'export'
 
 export type ReviewEvent =
   | { type: 'applied'; operationsCount: number; confirmable: boolean }
@@ -75,6 +76,10 @@ export function reduceReview(state: ReviewState, event: ReviewEvent): ReviewRedu
 
 export function guardReviewAction(state: ReviewState, action: SessionAction): ReviewReduceResult {
   return reduceReview(state, { type: 'intend', action })
+}
+
+export function canExportDocument(phase: ReviewPhase): boolean {
+  return phase !== 'pending'
 }
 
 export function persistableHtml(

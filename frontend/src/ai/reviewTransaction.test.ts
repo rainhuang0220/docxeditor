@@ -5,6 +5,7 @@ import {
   guardReviewAction,
   initialReviewState,
   persistableHtml,
+  canExportDocument,
   planDeleteModel,
   reduceReview,
   type ReviewEffect,
@@ -273,6 +274,16 @@ test('deleting active model while review pending → blocked', () => {
   assert.deepEqual(out.models, [{ id: 'a' }, { id: 'b' }])
   assert.equal(out.activeModelId, 'a')
   assert.equal(out.review.phase, 'pending')
+})
+
+test('pending review export is refused', () => {
+  const pending = pendingReview(freshDoc())
+  const out = guardReviewAction(pending, 'export')
+  assert.equal(out.allowed, false)
+  assert.equal(canExportDocument('pending'), false)
+  assert.equal(canExportDocument('idle'), true)
+  assert.equal(canExportDocument('committed'), true)
+  assert.equal(canExportDocument('rejected'), true)
 })
 
 test('deleting inactive model while review pending → does not change active model or review state', () => {

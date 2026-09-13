@@ -34,7 +34,7 @@ function App() {
       // Ctrl+P / Cmd+P: print
       if ((e.metaKey || e.ctrlKey) && e.key === 'p') {
         e.preventDefault()
-        window.print()
+        window.dispatchEvent(new CustomEvent('editor:trigger-print'))
       }
     }
     window.addEventListener('keydown', handler)

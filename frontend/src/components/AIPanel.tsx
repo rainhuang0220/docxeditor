@@ -4,7 +4,9 @@ import { useEditorContext } from '../context/EditorContext'
 import { apiUrl } from '../utils/api'
 import { initialState, reduce, type ChatEvent, type Effect, type MachineState } from '../ai/streamMachine'
 import { type ReviewEffect } from '../ai/reviewTransaction'
-import { REVIEW_LOCK_META } from '../ai/reviewLock'
+import type { Node as PmNode } from '@tiptap/pm/model'
+import { authorizeRestoreTr } from '../ai/reviewLock'
+import { checkpointHistory, dispatchAsSingleHistoryEvent, rejectRestoreTr, type HistoryCheckpoint } from '../ai/reviewHistory'
 import Markdown from 'react-markdown'
 import { diffWords } from 'diff'
 import { ThreadList } from './ThreadList'
@@ -138,6 +140,8 @@ export function AIPanel() {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const abortRef = useRef<AbortController | null>(null)
   const snapshotRef = useRef<string | null>(null)
+  const snapshotDocRef = useRef<PmNode | null>(null)
+  const histCheckpointRef = useRef<HistoryCheckpoint | null>(null)
   const machineRef = useRef<MachineState>(initialState())
   const streamGenRef = useRef(0)
   const charsRef = useRef(0)
@@ -272,18 +276,24 @@ export function AIPanel() {
       } else if (effect === 'commit') {
         setReview(null)
         snapshotRef.current = null
+        snapshotDocRef.current = null
+        histCheckpointRef.current = null
         setReviewSnapshot(null)
         editor?.setEditable(true)
         window.dispatchEvent(new CustomEvent('editor:save-version', { detail: { description: 'AI edit accepted' } }))
       } else if (effect === 'restore') {
         setReview(null)
         snapshotRef.current = null
+        snapshotDocRef.current = null
+        histCheckpointRef.current = null
         setReviewSnapshot(null)
         editor?.setEditable(true)
         addMessage('assistant', 'Changes rejected — the document was restored.')
       } else if (effect === 'clearSnapshot') {
         setReview(null)
         snapshotRef.current = null
+        snapshotDocRef.current = null
+        histCheckpointRef.current = null
         setReviewSnapshot(null)
         editor?.setEditable(true)
       }
@@ -297,15 +307,19 @@ export function AIPanel() {
     const ops: any[] = result.operations || []
     if (ops.length === 0) return
     try {
-      const singleFullRewrite = ops.length === 1 && ops[0].type === 'replace_content'
-      if (singleFullRewrite) {
-        editor.commands.setContent(ops[0].content || '', { parseOptions: { preserveWhitespace: true } })
-      } else {
-        editor.commands.setContent(snapshot, { emitUpdate: false, parseOptions: { preserveWhitespace: true } })
-        applyOperationBatch(editor, ops)
-      }
+      dispatchAsSingleHistoryEvent(editor.view, () => {
+        const singleFullRewrite = ops.length === 1 && ops[0].type === 'replace_content'
+        if (singleFullRewrite) {
+          editor.commands.setContent(ops[0].content || '', { parseOptions: { preserveWhitespace: true } })
+        } else {
+          applyOperationBatch(editor, ops)
+        }
+      })
     } catch {
-      editor.commands.setContent(snapshot, { parseOptions: { preserveWhitespace: true } })
+      const snap = snapshotDocRef.current
+      const hist = histCheckpointRef.current
+      if (snap) editor.view.dispatch(rejectRestoreTr(editor.state, snap, hist))
+      else editor.commands.setContent(snapshot, { parseOptions: { preserveWhitespace: true } })
       return
     }
     const reviewOut = dispatchReview({
@@ -354,6 +368,8 @@ export function AIPanel() {
     try {
       const documentContent = editor?.getHTML() || ''
       snapshotRef.current = editor ? documentContent : null
+      snapshotDocRef.current = editor ? editor.state.doc : null
+      histCheckpointRef.current = editor ? checkpointHistory(editor.state) : null
       setReviewSnapshot(editor ? documentContent : null)
       if (editor) {
         editor.setEditable(false)
@@ -548,21 +564,10 @@ export function AIPanel() {
       dispatchReview({ type: 'reject' })
       return
     }
-    const snapshot = snapshotRef.current
-    if (editor && snapshot !== null) {
-      editor.chain()
-        .command(({ tr }) => {
-          tr.setMeta(REVIEW_LOCK_META, { authorizeRestore: true })
-          return true
-        })
-        .run()
-      editor.chain()
-        .command(({ tr }) => {
-          tr.setMeta(REVIEW_LOCK_META, { restore: true })
-          return true
-        })
-        .setContent(snapshot, { parseOptions: { preserveWhitespace: true } })
-        .run()
+    const snapshotDoc = snapshotDocRef.current
+    if (editor && snapshotDoc) {
+      editor.view.dispatch(authorizeRestoreTr(editor.state))
+      editor.view.dispatch(rejectRestoreTr(editor.state, snapshotDoc, histCheckpointRef.current))
     }
     const out = dispatchReview({ type: 'reject' })
     applyReviewEffects(out.effects)

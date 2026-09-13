@@ -69,6 +69,7 @@ export function Toolbar() {
     const handleToggleAI = () => toggleAIPanel()
     const handleExport = () => {
       if (!editor) return
+      if (!guardSession('export')) return
       const html = editor.getHTML()
       const filename = `${documentTitle.replace(/[^a-zA-Z0-9\u4e00-\u9fff_-]/g, '_')}.docx`
       const pageSettings = getPageSettings()
@@ -93,15 +94,21 @@ export function Toolbar() {
       setShowLinkInput(true)
       setTimeout(() => linkInputRef.current?.focus(), 50)
     }
+    const handlePrint = () => {
+      if (!guardSession('export')) return
+      window.print()
+    }
     window.addEventListener('editor:toggle-ai-panel', handleToggleAI)
     window.addEventListener('editor:trigger-export', handleExport)
     window.addEventListener('editor:open-link-input', handleOpenLink)
+    window.addEventListener('editor:trigger-print', handlePrint)
     return () => {
       window.removeEventListener('editor:toggle-ai-panel', handleToggleAI)
       window.removeEventListener('editor:trigger-export', handleExport)
       window.removeEventListener('editor:open-link-input', handleOpenLink)
+      window.removeEventListener('editor:trigger-print', handlePrint)
     }
-  }, [editor, toggleAIPanel, documentTitle])
+  }, [editor, toggleAIPanel, documentTitle, guardSession])
 
   if (!editor) return null
 
@@ -373,6 +380,7 @@ export function Toolbar() {
       </ToolButton>
 
       <ToolButton onClick={async () => {
+        if (!guardSession('export')) return
         const html = editor.getHTML()
         const filename = `${documentTitle.replace(/[^a-zA-Z0-9\u4e00-\u9fff_-]/g, '_')}.docx`
         const pageSettings = getPageSettings()
@@ -398,7 +406,10 @@ export function Toolbar() {
         <Download size={16} />
       </ToolButton>
 
-      <ToolButton onClick={() => window.print()} title="Print">
+      <ToolButton onClick={() => {
+        if (!guardSession('export')) return
+        window.print()
+      }} title="Print">
         <Printer size={16} />
       </ToolButton>
 
