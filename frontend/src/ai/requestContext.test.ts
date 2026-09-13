@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { Schema } from '@tiptap/pm/model'
 import { EditorState, TextSelection } from '@tiptap/pm/state'
 import { createDocumentRevisionPlugin, getDocumentRevision } from './documentRevision.ts'
-import { captureAnchor, captureRequestContext, isMutatingResultStale } from './requestContext.ts'
+import { captureAnchor, captureRequestContext, isMutatingResultStale, requireOwningThreadId } from './requestContext.ts'
 import { resolveOpTarget } from './operationTarget.ts'
 import { planOperations } from './applyOperations.ts'
 import { resetRequestLatch, tryBeginRequest, finishRequest, getInFlightRequestId, isRequestInFlight } from './requestLatch.ts'
@@ -137,8 +137,77 @@ test('selection-only movement is not stale', () => {
 test('planOperations fails closed before any mutation when replace_selection has no range', () => {
   const ctx = capture(createState())
   ctx.anchor = { from: 3, to: 3, cursor: 3, selectedText: '' }
-  const planned = planOperations([{ type: 'replace_selection', content: 'x' }], ctx, 20)
+  const planned = planOperations([{ type: 'replace_selection', content: 'x' }], ctx, ctx.documentNode)
   assert.equal(planned.ok, false)
+})
+
+test('case 43: first request gets a concrete thread ID before RequestContext capture', () => {
+  let created = 0
+  const id = requireOwningThreadId(null, () => {
+    created += 1
+    return 'thread-first'
+  })
+  assert.equal(id, 'thread-first')
+  assert.equal(created, 1)
+  const state = createState()
+  const ctx = captureRequestContext({
+    requestId: 'req-first',
+    source: 'panel',
+    state,
+    html: '<p>Hello world</p>',
+    threadId: id!,
+    modelId: 'm1',
+  })
+  assert.equal(ctx.originatingThreadId, 'thread-first')
+  assert.notEqual(ctx.originatingThreadId, null)
+})
+
+test('case 44: no null-thread mismatch exemption remains', () => {
+  const state = createState()
+  const ctx = captureRequestContext({
+    requestId: 'req-1',
+    source: 'panel',
+    state,
+    html: '<p>Hello world</p>',
+    threadId: 'thread-first',
+    modelId: 'm1',
+  })
+  assert.equal(isMutatingResultStale({
+    state,
+    ctx,
+    liveRequestId: ctx.requestId,
+    liveThreadId: null,
+  }), true)
+})
+
+test('case 45: first conversation cannot apply to a different thread', () => {
+  const state = createState()
+  const ctx = captureRequestContext({
+    requestId: 'req-1',
+    source: 'panel',
+    state,
+    html: '<p>Hello world</p>',
+    threadId: 'thread-first',
+    modelId: 'm1',
+  })
+  assert.equal(isMutatingResultStale({
+    state,
+    ctx,
+    liveRequestId: ctx.requestId,
+    liveThreadId: 'thread-other',
+  }), true)
+  assert.equal(isMutatingResultStale({
+    state,
+    ctx,
+    liveRequestId: ctx.requestId,
+    liveThreadId: 'thread-first',
+  }), false)
+})
+
+test('requireOwningThreadId reuses a live id and rejects empty create', () => {
+  assert.equal(requireOwningThreadId('existing', () => 'new'), 'existing')
+  assert.equal(requireOwningThreadId(null, () => ''), null)
+  assert.equal(requireOwningThreadId('', () => 'created'), 'created')
 })
 
 test('request latch allows exactly one in-flight request', () => {

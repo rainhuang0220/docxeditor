@@ -13,7 +13,7 @@ export interface RequestContext {
   documentNode: Node
   documentHtml: string
   anchor: RequestAnchor
-  originatingThreadId: string | null
+  originatingThreadId: string
   originatingModelId: string
 }
 
@@ -32,10 +32,13 @@ export function captureRequestContext(input: {
   source: 'panel' | 'selection'
   state: EditorState
   html: string
-  threadId: string | null
+  threadId: string
   modelId: string
   anchor?: RequestAnchor
 }): RequestContext {
+  if (!input.threadId) {
+    throw new Error('RequestContext requires a concrete originatingThreadId')
+  }
   return {
     requestId: input.requestId,
     source: input.source,
@@ -48,6 +51,17 @@ export function captureRequestContext(input: {
   }
 }
 
+/** Synchronously obtain a concrete owning thread id before RequestContext capture. */
+export function requireOwningThreadId(
+  activeThreadId: string | null | undefined,
+  createThread: () => string,
+): string | null {
+  if (typeof activeThreadId === 'string' && activeThreadId.length > 0) return activeThreadId
+  const created = createThread()
+  if (typeof created !== 'string' || created.length === 0) return null
+  return created
+}
+
 export function isMutatingResultStale(input: {
   state: EditorState
   ctx: RequestContext
@@ -55,7 +69,7 @@ export function isMutatingResultStale(input: {
   liveThreadId: string | null
 }): boolean {
   if (input.liveRequestId !== input.ctx.requestId) return true
-  if (input.liveThreadId !== null && input.liveThreadId !== input.ctx.originatingThreadId) return true
+  if (!input.liveThreadId || input.liveThreadId !== input.ctx.originatingThreadId) return true
   if (getDocumentRevision(input.state) !== input.ctx.documentRevision) return true
   if (!input.state.doc.eq(input.ctx.documentNode)) return true
   return false

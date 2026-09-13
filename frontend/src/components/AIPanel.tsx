@@ -6,9 +6,10 @@ import { initialState, reduce, type ChatEvent, type Effect, type MachineState } 
 import { type ReviewEffect } from '../ai/reviewTransaction'
 import type { Node as PmNode } from '@tiptap/pm/model'
 import { authorizeRestoreTr } from '../ai/reviewLock'
-import { checkpointHistory, dispatchAsSingleHistoryEvent, rejectRestoreTr, type HistoryCheckpoint } from '../ai/reviewHistory'
-import { captureRequestContext, isMutatingResultStale, STALE_RESULT_MESSAGE, type RequestContext } from '../ai/requestContext'
-import { applyOperationBatch, planOperations } from '../ai/applyOperations'
+import { checkpointHistory, rejectRestoreTr, type HistoryCheckpoint } from '../ai/reviewHistory'
+import { captureRequestContext, isMutatingResultStale, requireOwningThreadId, STALE_RESULT_MESSAGE, type RequestContext } from '../ai/requestContext'
+import { executeAiOperations, reviewEventAfterExecute } from '../ai/applyOperations'
+import { INVALID_AI_EDIT_MESSAGE, type AiOperation } from '../ai/operations'
 import { tryBeginRequest, finishRequest, getInFlightRequestId, IN_FLIGHT_MESSAGE } from '../ai/requestLatch'
 import { showToast } from './Toast'
 import Markdown from 'react-markdown'
@@ -77,8 +78,8 @@ function toolStartLabel(name: string): string {
   }
 }
 
-function opSummary(op: any): string {
-  const blockNo = typeof op.paragraph_index === 'number' ? ` ${op.paragraph_index + 1}` : ''
+function opSummary(op: AiOperation): string {
+  const blockNo = 'paragraph_index' in op ? ` ${op.paragraph_index + 1}` : ''
   switch (op.type) {
     case 'replace_content': return 'Rewrote the entire document'
     case 'replace_paragraph': return `Edited block${blockNo}`
@@ -110,7 +111,7 @@ function stripHtml(html: string): string {
  *  pre- and post-edit document text. The batch's <ul>-style summary is
  *  too noisy for anything beyond ~5 operations; this collapses it to a
  *  single line. */
-function computeDiffStat(snapshotHtml: string, liveHtml: string, ops: any[]): DiffStat {
+function computeDiffStat(snapshotHtml: string, liveHtml: string, ops: AiOperation[]): DiffStat {
   const before = stripHtml(snapshotHtml)
   const after = stripHtml(liveHtml)
   let added = 0
@@ -259,7 +260,7 @@ export function AIPanel() {
   }, [editor, isReviewPending])
 
   const presentAssistant = useCallback((result: any, streamMsgId: string | null) => {
-    const ops: any[] = result.operations || []
+    const ops = Array.isArray(result.operations) ? result.operations : []
     const warnings: string[] = result.warnings || []
     let displayReply = result.reply || (ops.length > 0 ? 'Done.' : 'No changes were needed.')
     if (warnings.length > 0) {
@@ -274,7 +275,7 @@ export function AIPanel() {
       if (effect === 'enterPending') {
         const snapshot = snapshotRef.current
         if (snapshot === null || !editor) continue
-        const ops: any[] = result?.operations || []
+        const ops = Array.isArray(result?.operations) ? result.operations as AiOperation[] : []
         setReview({ snapshot, diff: computeDiffStat(snapshot, editor.getHTML(), ops) })
         editor.setEditable(false)
         setReviewSnapshot(snapshot)
@@ -308,12 +309,12 @@ export function AIPanel() {
     }
   }, [editor, addMessage, setReviewSnapshot])
 
-  const applyFinishedOps = useCallback((result: any) => {
-    if (!editor) return
+  const applyFinishedOps = useCallback((result: any): 'applied' | 'stale' | 'invalid' | 'noop' => {
+    if (!editor) return 'invalid'
     const snapshot = snapshotRef.current
-    if (snapshot === null) return
-    const ops: any[] = result.operations || []
-    if (ops.length === 0) return
+    if (snapshot === null) return 'noop'
+    const rawOps = result?.operations
+    if (!Array.isArray(rawOps) || rawOps.length === 0) return 'noop'
     const ctx = requestCtxRef.current
     if (!ctx || isMutatingResultStale({
       state: editor.state,
@@ -321,42 +322,55 @@ export function AIPanel() {
       liveRequestId: getInFlightRequestId(),
       liveThreadId: activeThreadId,
     })) {
-      addMessage('assistant', STALE_RESULT_MESSAGE)
-      return
+      return 'stale'
     }
-    const planned = planOperations(ops, ctx, editor.state.doc.content.size)
-    if (!planned.ok) {
-      addMessage('assistant', planned.reason)
-      return
-    }
+    let executed
     try {
-      dispatchAsSingleHistoryEvent(editor.view, () => {
-        const singleFullRewrite = ops.length === 1 && ops[0].type === 'replace_content'
-        if (singleFullRewrite) {
-          editor.commands.setContent(ops[0].content || '', { parseOptions: { preserveWhitespace: true } })
-        } else {
-          applyOperationBatch(editor, ops, ctx)
-        }
-      })
-    } catch {
+      executed = executeAiOperations(editor, rawOps, ctx)
+    } catch (err) {
+      console.error('[ai-ops] unexpected apply failure', err)
       const snap = snapshotDocRef.current
       const hist = histCheckpointRef.current
-      if (snap) editor.view.dispatch(rejectRestoreTr(editor.state, snap, hist))
-      else editor.commands.setContent(snapshot, { parseOptions: { preserveWhitespace: true } })
+      if (snap && !editor.state.doc.eq(snap)) {
+        editor.view.dispatch(rejectRestoreTr(editor.state, snap, hist))
+      }
+      return 'invalid'
+    }
+    if (!executed.ok) {
+      console.error('[ai-ops]', executed.reason)
+      return 'invalid'
+    }
+    const reviewEvent = reviewEventAfterExecute(executed, result.requires_confirmation === true)
+    if (!reviewEvent) return 'noop'
+    const reviewOut = dispatchReview(reviewEvent)
+    applyReviewEffects(reviewOut.effects, { ...result, operations: executed.operations })
+    return 'applied'
+  }, [editor, dispatchReview, applyReviewEffects, activeThreadId])
+
+  const presentApplyOutcome = useCallback((
+    outcome: 'applied' | 'stale' | 'invalid' | 'noop',
+    result: any,
+    streamMsgId: string | null,
+  ) => {
+    if (outcome === 'invalid') {
+      if (streamMsgId) finalizeMessage(streamMsgId, INVALID_AI_EDIT_MESSAGE)
+      else addMessage('assistant', INVALID_AI_EDIT_MESSAGE)
       return
     }
-    const reviewOut = dispatchReview({
-      type: 'applied',
-      operationsCount: ops.length,
-      confirmable: result.requires_confirmation === true,
-    })
-    applyReviewEffects(reviewOut.effects, result)
-  }, [editor, dispatchReview, applyReviewEffects, activeThreadId, addMessage])
-
-  const applyStreamEffects = useCallback((effects: Effect[], result?: any) => {
-    for (const effect of effects) {
-      if (effect === 'applyResult') applyFinishedOps(result)
+    if (outcome === 'stale') {
+      if (streamMsgId) finalizeMessage(streamMsgId, STALE_RESULT_MESSAGE)
+      else addMessage('assistant', STALE_RESULT_MESSAGE)
+      return
     }
+    presentAssistant(result, streamMsgId)
+  }, [addMessage, finalizeMessage, presentAssistant])
+
+  const applyStreamEffects = useCallback((effects: Effect[], result?: any): 'applied' | 'stale' | 'invalid' | 'noop' => {
+    let outcome: 'applied' | 'stale' | 'invalid' | 'noop' = 'noop'
+    for (const effect of effects) {
+      if (effect === 'applyResult') outcome = applyFinishedOps(result)
+    }
+    return outcome
   }, [applyFinishedOps])
 
   const submitAIRequest = useCallback(async (opts: { message: string; source: 'panel' | 'selection'; anchor?: import('../ai/operationTarget').RequestAnchor }) => {
@@ -371,12 +385,11 @@ export function AIPanel() {
       finishRequest(requestId)
       return
     }
-    let threadId = activeThreadId
-    if (!threadId) {
-      threadId = startNewThread(undefined, { ignoreInFlight: true })
-    }
+    const threadId = requireOwningThreadId(activeThreadId, () =>
+      startNewThread(undefined, { ignoreInFlight: true }),
+    )
     const editorState = editor?.state
-    if (!editor || !editorState) {
+    if (!threadId || !editor || !editorState) {
       finishRequest(requestId)
       return
     }
@@ -452,8 +465,7 @@ export function AIPanel() {
         const data = await fallbackRes.json()
         const out = dispatch({ type: 'fallback', operationsCount: operationsCountOf(data) })
         if (!out.stale && out.prev.phase === 'streaming') {
-          presentAssistant(data, null)
-          applyStreamEffects(out.effects, data)
+          presentApplyOutcome(applyStreamEffects(out.effects, data), data, null)
         }
         return
       }
@@ -515,8 +527,7 @@ export function AIPanel() {
             const result = event.result || {}
             const out = dispatch({ type: 'done', operationsCount: operationsCountOf(result) })
             if (out.stale || out.prev.phase !== 'streaming') break
-            presentAssistant(result, streamMsgId)
-            applyStreamEffects(out.effects, result)
+            presentApplyOutcome(applyStreamEffects(out.effects, result), result, streamMsgId)
             break
           }
           case 'error': {
@@ -571,7 +582,7 @@ export function AIPanel() {
         finishRequest(requestId)
       }
     }
-  }, [editor, addMessage, updateMessage, finalizeMessage, setIsSending, endStreamingUI, presentAssistant, applyStreamEffects, syncActiveModelToBackend, activeThreadId, startNewThread, guardSession, setReviewSnapshot, getMessages, activeModelId])
+  }, [editor, addMessage, updateMessage, finalizeMessage, setIsSending, endStreamingUI, presentApplyOutcome, applyStreamEffects, syncActiveModelToBackend, activeThreadId, startNewThread, guardSession, setReviewSnapshot, getMessages, activeModelId])
 
   const handleSend = () => {
     if (cmdOpen) {
