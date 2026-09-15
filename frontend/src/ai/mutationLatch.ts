@@ -1,18 +1,55 @@
-let depth = 0
+export const REPLACEMENT_BUSY_MESSAGE =
+  'Another document replacement is already in progress.'
 
-/** Blocks ordinary docChanged transactions via ReviewLock while a destructive prepare is in flight. */
-export function lockDocumentMutations(): void {
-  depth += 1
+export interface ExclusiveLease {
+  readonly id: string
+  /** Idempotent. No-ops if this lease is not the current owner. */
+  release(): void
 }
 
-export function unlockDocumentMutations(): void {
-  depth = Math.max(0, depth - 1)
+let mutationOwner: string | null = null
+let flightOwner: string | null = null
+
+function acquire(slot: { get(): string | null; set(id: string | null): void }): ExclusiveLease | null {
+  if (slot.get() !== null) return null
+  const id = crypto.randomUUID()
+  slot.set(id)
+  let released = false
+  return {
+    id,
+    release() {
+      if (released) return
+      released = true
+      if (slot.get() === id) slot.set(null)
+    },
+  }
+}
+
+/** Exclusive ReviewLock lease while a destructive prepare is flushing/checkpointing. */
+export function tryAcquireDocumentMutationLock(): ExclusiveLease | null {
+  return acquire({
+    get: () => mutationOwner,
+    set: id => { mutationOwner = id },
+  })
+}
+
+/** Exclusive single-flight for the whole replaceCurrentDocument operation. */
+export function tryBeginDestructiveReplacement(): ExclusiveLease | null {
+  return acquire({
+    get: () => flightOwner,
+    set: id => { flightOwner = id },
+  })
 }
 
 export function isDocumentMutationLocked(): boolean {
-  return depth > 0
+  return mutationOwner !== null
+}
+
+export function isDestructiveReplacementInFlight(): boolean {
+  return flightOwner !== null
 }
 
 export function resetDocumentMutationLatchForTests(): void {
-  depth = 0
+  mutationOwner = null
+  flightOwner = null
 }

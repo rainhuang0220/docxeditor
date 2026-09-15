@@ -29,8 +29,11 @@ export {
   persistAfterAccept,
   persistAfterReject,
   RECOVERY_BLOCK_MESSAGE,
+  REPLACEMENT_BUSY_MESSAGE,
+  runDestructiveReplacement,
   saveManualVersion,
 } from './destructivePrepare.ts'
+export { applyVerifiedReplacement } from './editorReplacement.ts'
 export { hydrateDocument, resolveInitialHtml, DEFAULT_DOCUMENT_HTML } from './hydrate.ts'
 export { formatPersistenceStatus, persistenceStatusIsSaved } from './status.ts'
 export { bindPageLifecycle, isDocumentHidden } from './lifecycle.ts'

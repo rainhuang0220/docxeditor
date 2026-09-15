@@ -2,9 +2,8 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   isDocumentMutationLocked,
-  lockDocumentMutations,
   resetDocumentMutationLatchForTests,
-  unlockDocumentMutations,
+  tryAcquireDocumentMutationLock,
 } from '../ai/mutationLatch.ts'
 import { createHeadlessEditor } from '../test/headlessEditor.ts'
 import {
@@ -187,13 +186,14 @@ test('17. user edit during asynchronous preparation is blocked, not silently los
     html: '<p>A</p>',
     isLocked: () => isDocumentMutationLocked(),
   })
-  lockDocumentMutations()
+  const lease = tryAcquireDocumentMutationLock()
+  assert.ok(lease)
   const before = harness.editor.state.doc.textContent
   harness.editor.commands.insertContent('A2')
   assert.equal(isDocumentMutationLocked(), true)
   assert.equal(harness.editor.state.doc.textContent, before)
   assert.equal(harness.editor.state.doc.textContent.includes('A2'), false)
-  unlockDocumentMutations()
+  lease!.release()
   harness.editor.commands.insertContent('A2')
   assert.equal(harness.editor.state.doc.textContent.includes('A2'), true)
   harness.destroy()

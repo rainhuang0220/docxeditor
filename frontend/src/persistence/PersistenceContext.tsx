@@ -16,12 +16,13 @@ import { hydrateDocument } from './hydrate.ts'
 import { bindPageLifecycle } from './lifecycle.ts'
 import { createSaveCoordinator, type SaveCoordinator } from './saveCoordinator.ts'
 import {
-  prepareDestructiveDocumentChange,
   persistAfterAccept,
   persistAfterReject,
   RECOVERY_BLOCK_MESSAGE,
+  runDestructiveReplacement,
   saveManualVersion,
 } from './destructivePrepare.ts'
+import { applyVerifiedReplacement } from './editorReplacement.ts'
 import {
   AUTOSAVE_DEBOUNCE_MS,
   type HydrationResult,
@@ -251,33 +252,25 @@ export function PersistenceProvider({ children }: { children: ReactNode }) {
     description: string,
   ): Promise<ReplaceDocumentOutcome> => {
     const coordinator = coordinatorRef.current
-    if (!coordinator) {
+    if (!coordinator || !editor) {
       return { ok: false, replaced: false, kind: 'error', message: RECOVERY_BLOCK_MESSAGE }
     }
-    const prep = await prepareDestructiveDocumentChange(description, {
+    const result = await runDestructiveReplacement({
+      nextHtml,
+      description,
       persistEnabled: persistEnabledRef.current,
       storageUnavailable: coordinator.getStatus().kind === 'degraded' || !persistEnabledRef.current,
       getSnapshot: () => getPersistableRef.current(),
       flushNow,
       createVersion: (desc, html) => createVersion(desc, { html, notify: false }),
       beginDestructiveTransition: () => coordinator.beginDestructiveTransition(),
+      apply: html => applyVerifiedReplacement(editor, html),
+      flushAfter: flushNow,
     })
-    if (!prep.ok) {
+    if (!result.replaced && result.kind !== 'skipped') {
       showToast(RECOVERY_BLOCK_MESSAGE, 'error')
-      return { ok: false, replaced: false, kind: prep.kind, message: prep.message }
     }
-    if (!editor) {
-      prep.applyReplacement(() => {})
-      return { ok: false, replaced: false, kind: 'error', message: RECOVERY_BLOCK_MESSAGE }
-    }
-    prep.applyReplacement(() => {
-      editor.commands.setContent(nextHtml)
-    })
-    const after = await flushNow()
-    if (!after.ok) {
-      return { ok: false, replaced: true, kind: after.kind, message: after.message }
-    }
-    return { ok: true, replaced: true, savedAt: after.savedAt }
+    return result
   }, [createVersion, editor, flushNow])
 
   const saveManualVersionNow = useCallback(async () => {
