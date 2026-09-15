@@ -383,7 +383,8 @@ test('28. queued autosave from old document cannot overwrite a later New Documen
   await clock.advance(800)
   const transition = coordinator.beginDestructiveTransition()
   gate.resolve()
-  await transition
+  const outcome = await transition
+  assert.equal(outcome.ok, true)
   live = 'DOC-B'
   await coordinator.flushNow()
   assert.equal(writes.at(-1), 'DOC-B')
@@ -409,7 +410,8 @@ test('29. queued autosave from old document cannot overwrite a successful import
   await clock.advance(800)
   const transition = coordinator.beginDestructiveTransition()
   gate.resolve()
-  await transition
+  const outcome = await transition
+  assert.equal(outcome.ok, true)
   live = 'IMPORTED'
   await coordinator.flushNow()
   assert.equal(writes.at(-1), 'IMPORTED')
@@ -435,7 +437,8 @@ test('30. queued autosave cannot overwrite a restored version', async () => {
   await clock.advance(800)
   const transition = coordinator.beginDestructiveTransition()
   gate.resolve()
-  await transition
+  const outcome = await transition
+  assert.equal(outcome.ok, true)
   live = 'RESTORED'
   await coordinator.flushNow()
   assert.equal(writes.at(-1), 'RESTORED')

@@ -13,8 +13,7 @@ export function VersionPanel() {
     versions,
     versionsError,
     versionsBusy,
-    beginDestructiveTransition,
-    flushNow,
+    replaceCurrentDocument,
   } = usePersistence()
   const [isOpen, setIsOpen] = useState(false)
   const [diffVersion, setDiffVersion] = useState<VersionRecord | null>(null)
@@ -25,8 +24,6 @@ export function VersionPanel() {
     setSaving(true)
     try {
       await createVersion(description)
-    } catch {
-      /* persistence layer surfaces the error */
     } finally {
       setSaving(false)
     }
@@ -35,14 +32,7 @@ export function VersionPanel() {
   const restoreVersion = async (version: VersionRecord) => {
     if (!editor) return
     if (!guardSession('mutateDocument')) return
-    try {
-      await createVersion('Auto-save before restore')
-    } catch {
-      /* still restore; version failure is visible */
-    }
-    await beginDestructiveTransition()
-    editor.commands.setContent(version.content)
-    await flushNow()
+    await replaceCurrentDocument(version.content, 'Auto-save before restore')
   }
 
   const removeVersion = async (id: string) => {

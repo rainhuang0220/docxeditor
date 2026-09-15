@@ -40,6 +40,7 @@ export async function hydrateDocument(): Promise<HydrationResult> {
       persistEnabled: false,
       degraded: true,
       message: wrapped.message,
+      migrationWarning: null,
     }
   }
 
@@ -52,6 +53,7 @@ export async function hydrateDocument(): Promise<HydrationResult> {
       persistEnabled: false,
       degraded: true,
       message: migration.message,
+      migrationWarning: null,
     }
   }
 
@@ -86,6 +88,7 @@ export async function hydrateDocument(): Promise<HydrationResult> {
         persistEnabled: true,
         degraded: false,
         message: null,
+        migrationWarning: migration.message,
       }
     }
     return {
@@ -95,6 +98,7 @@ export async function hydrateDocument(): Promise<HydrationResult> {
       persistEnabled: true,
       degraded: true,
       message: migration.message,
+      migrationWarning: migration.message,
     }
   }
 
@@ -103,13 +107,15 @@ export async function hydrateDocument(): Promise<HydrationResult> {
     const current = await loadCurrentDocument().catch(() => ({ status: 'missing' as const }))
     const html = current.status === 'ok' ? current.record.html : (legacy?.html ?? null)
     const savedAt = current.status === 'ok' ? current.record.savedAt : (legacy?.savedAt ?? null)
+    const currentOk = current.status === 'ok'
     return {
       phase: 'ready',
       html,
       savedAt,
-      persistEnabled: current.status === 'ok',
-      degraded: true,
-      message: migration.message,
+      persistEnabled: currentOk,
+      degraded: !currentOk,
+      message: currentOk ? null : migration.message,
+      migrationWarning: migration.message,
     }
   }
 
@@ -125,6 +131,7 @@ export async function hydrateDocument(): Promise<HydrationResult> {
         message: 'Saved document is unreadable.',
       }
     }
+    const warning = migration.status === 'skipped' ? (migration.versionWarning ?? null) : null
     if (current.status === 'missing') {
       return {
         phase: 'ready',
@@ -133,6 +140,7 @@ export async function hydrateDocument(): Promise<HydrationResult> {
         persistEnabled: true,
         degraded: false,
         message: null,
+        migrationWarning: warning,
       }
     }
     return {
@@ -142,6 +150,7 @@ export async function hydrateDocument(): Promise<HydrationResult> {
       persistEnabled: true,
       degraded: false,
       message: null,
+      migrationWarning: warning,
     }
   } catch (error) {
     const wrapped = wrapStorageError(error, 'unavailable')
@@ -153,6 +162,7 @@ export async function hydrateDocument(): Promise<HydrationResult> {
       persistEnabled: false,
       degraded: true,
       message: wrapped.message,
+      migrationWarning: null,
     }
   }
 }

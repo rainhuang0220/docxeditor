@@ -6,7 +6,7 @@ import { usePersistence } from '../persistence/PersistenceContext'
 
 export function NewDocumentDialog() {
   const { editor, setDocumentTitle, guardSession } = useEditorContext()
-  const { createVersion, beginDestructiveTransition, flushNow } = usePersistence()
+  const { replaceCurrentDocument } = usePersistence()
   const [isOpen, setIsOpen] = useState(false)
   const [confirmKey, setConfirmKey] = useState<string | null>(null)
 
@@ -26,15 +26,9 @@ export function NewDocumentDialog() {
     if (!guardSession('mutateDocument')) return
     const template = DOCUMENT_TEMPLATES[key as keyof typeof DOCUMENT_TEMPLATES]
     if (template) {
-      try {
-        await createVersion('Before new document')
-      } catch {
-        /* version failure already surfaced */
-      }
-      await beginDestructiveTransition()
-      editor!.commands.setContent(template.content)
+      const result = await replaceCurrentDocument(template.content, 'Before new document')
+      if (!result.replaced) return
       setDocumentTitle(template.name === 'Blank' ? 'Untitled Document' : template.name)
-      await flushNow()
     }
     setConfirmKey(null)
     setIsOpen(false)

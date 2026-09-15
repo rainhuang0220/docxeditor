@@ -16,9 +16,19 @@ import { hydrateDocument } from './hydrate.ts'
 import { bindPageLifecycle } from './lifecycle.ts'
 import { createSaveCoordinator, type SaveCoordinator } from './saveCoordinator.ts'
 import {
+  prepareDestructiveDocumentChange,
+  persistAfterAccept,
+  persistAfterReject,
+  RECOVERY_BLOCK_MESSAGE,
+  saveManualVersion,
+} from './destructivePrepare.ts'
+import {
   AUTOSAVE_DEBOUNCE_MS,
   type HydrationResult,
   type PersistenceStatus,
+  type ReplaceDocumentOutcome,
+  type SaveOutcome,
+  type VersionOutcome,
   type VersionRecord,
 } from './types.ts'
 import { createVersion as persistVersion, deleteVersion as persistDeleteVersion, listVersions } from './versionStore.ts'
@@ -28,9 +38,12 @@ export interface PersistenceApi {
   status: PersistenceStatus
   persistEnabled: boolean
   scheduleSave: () => void
-  flushNow: () => Promise<void>
-  beginDestructiveTransition: () => Promise<void>
-  createVersion: (description: string) => Promise<VersionRecord>
+  flushNow: () => Promise<SaveOutcome>
+  createVersion: (description: string, opts?: { html?: string; notify?: boolean }) => Promise<VersionOutcome>
+  replaceCurrentDocument: (nextHtml: string, description: string) => Promise<ReplaceDocumentOutcome>
+  saveManualVersion: () => Promise<SaveOutcome>
+  persistAfterAccept: () => Promise<SaveOutcome>
+  persistAfterReject: () => Promise<SaveOutcome>
   deleteVersion: (id: string) => Promise<void>
   versions: VersionRecord[]
   versionsError: string | null
@@ -93,6 +106,9 @@ export function PersistenceProvider({ children }: { children: ReactNode }) {
       const result = await hydrateDocument()
       if (cancelled) return
       setHydration(result)
+      if (result.phase === 'ready' && result.migrationWarning) {
+        showToast(result.migrationWarning, 'info')
+      }
       if (result.phase === 'ready' && result.persistEnabled && result.savedAt && result.html !== null) {
         coordinatorRef.current?.markClean(result.savedAt, result.html)
         setStatus({ kind: 'clean', savedAt: result.savedAt })
@@ -101,8 +117,6 @@ export function PersistenceProvider({ children }: { children: ReactNode }) {
         setStatus({ kind: 'degraded', message: result.message || 'Document storage is unavailable.' })
       } else if (result.phase === 'blocked') {
         setStatus({ kind: 'error', message: result.message })
-      } else if (result.phase === 'ready' && result.degraded && result.message) {
-        setStatus({ kind: 'degraded', message: result.message })
       }
     })()
     return () => {
@@ -187,51 +201,96 @@ export function PersistenceProvider({ children }: { children: ReactNode }) {
     coordinatorRef.current?.scheduleSave()
   }, [])
 
-  const flushNow = useCallback(async () => {
-    await coordinatorRef.current?.flushNow()
+  const flushNow = useCallback(async (): Promise<SaveOutcome> => {
+    const coordinator = coordinatorRef.current
+    if (!coordinator) {
+      return { ok: false, kind: 'error', message: 'Could not save the document.' }
+    }
+    return coordinator.flushNow()
   }, [])
 
-  const beginDestructiveTransition = useCallback(async () => {
-    await coordinatorRef.current?.beginDestructiveTransition()
-  }, [])
-
-  const createVersion = useCallback(async (description: string) => {
+  const createVersion = useCallback(async (
+    description: string,
+    opts?: { html?: string; notify?: boolean },
+  ): Promise<VersionOutcome> => {
     if (!persistEnabledRef.current) {
-      throw new PersistenceError('unavailable', 'Document storage is unavailable.')
+      return { ok: false, kind: 'degraded', message: 'Document storage is unavailable.' }
     }
     if (!canPersistRef.current()) {
-      throw new PersistenceError('version-write', 'Cannot save a version of a pending AI proposal.')
+      return { ok: false, kind: 'skipped', message: 'Cannot save a version of a pending AI proposal.' }
     }
     const record: VersionRecord = {
       id: crypto.randomUUID(),
       timestamp: new Date().toISOString(),
       description,
-      content: getPersistableRef.current(),
+      content: opts?.html ?? getPersistableRef.current(),
     }
     try {
       const saved = await persistVersion(record)
-      setVersions(prev => {
-        const next = [saved, ...prev.filter(item => item.id !== saved.id)]
-        return next
-      })
+      setVersions(prev => [saved, ...prev.filter(item => item.id !== saved.id)])
       setVersionsError(null)
       versionErrorToastedRef.current = false
       void refreshVersions()
-      return saved
+      return { ok: true, version: saved }
     } catch (error) {
       const message = error instanceof PersistenceError
         ? error.message
         : 'Could not save a version.'
+      const kind = error instanceof PersistenceError && error.code === 'unavailable' ? 'degraded' : 'error'
       setVersionsError(message)
-      if (!versionErrorToastedRef.current) {
+      if (opts?.notify !== false && !versionErrorToastedRef.current) {
         versionErrorToastedRef.current = true
         showToast(message, 'error')
       }
-      throw error instanceof PersistenceError
-        ? error
-        : new PersistenceError('version-write', message)
+      return { ok: false, kind, message }
     }
   }, [refreshVersions])
+
+  const replaceCurrentDocument = useCallback(async (
+    nextHtml: string,
+    description: string,
+  ): Promise<ReplaceDocumentOutcome> => {
+    const coordinator = coordinatorRef.current
+    if (!coordinator) {
+      return { ok: false, replaced: false, kind: 'error', message: RECOVERY_BLOCK_MESSAGE }
+    }
+    const prep = await prepareDestructiveDocumentChange(description, {
+      persistEnabled: persistEnabledRef.current,
+      storageUnavailable: coordinator.getStatus().kind === 'degraded' || !persistEnabledRef.current,
+      getSnapshot: () => getPersistableRef.current(),
+      flushNow,
+      createVersion: (desc, html) => createVersion(desc, { html, notify: false }),
+      beginDestructiveTransition: () => coordinator.beginDestructiveTransition(),
+    })
+    if (!prep.ok) {
+      showToast(RECOVERY_BLOCK_MESSAGE, 'error')
+      return { ok: false, replaced: false, kind: prep.kind, message: prep.message }
+    }
+    if (!editor) {
+      prep.applyReplacement(() => {})
+      return { ok: false, replaced: false, kind: 'error', message: RECOVERY_BLOCK_MESSAGE }
+    }
+    prep.applyReplacement(() => {
+      editor.commands.setContent(nextHtml)
+    })
+    const after = await flushNow()
+    if (!after.ok) {
+      return { ok: false, replaced: true, kind: after.kind, message: after.message }
+    }
+    return { ok: true, replaced: true, savedAt: after.savedAt }
+  }, [createVersion, editor, flushNow])
+
+  const saveManualVersionNow = useCallback(async () => {
+    return saveManualVersion(flushNow, description => createVersion(description))
+  }, [createVersion, flushNow])
+
+  const persistAfterAcceptNow = useCallback(async () => {
+    return persistAfterAccept(flushNow, description => createVersion(description))
+  }, [createVersion, flushNow])
+
+  const persistAfterRejectNow = useCallback(async () => {
+    return persistAfterReject(flushNow)
+  }, [flushNow])
 
   const deleteVersion = useCallback(async (id: string) => {
     try {
@@ -266,8 +325,11 @@ export function PersistenceProvider({ children }: { children: ReactNode }) {
     persistEnabled: persistEnabledOf(hydration),
     scheduleSave,
     flushNow,
-    beginDestructiveTransition,
     createVersion,
+    replaceCurrentDocument,
+    saveManualVersion: saveManualVersionNow,
+    persistAfterAccept: persistAfterAcceptNow,
+    persistAfterReject: persistAfterRejectNow,
     deleteVersion,
     versions,
     versionsError,
@@ -279,8 +341,11 @@ export function PersistenceProvider({ children }: { children: ReactNode }) {
     status,
     scheduleSave,
     flushNow,
-    beginDestructiveTransition,
     createVersion,
+    replaceCurrentDocument,
+    saveManualVersionNow,
+    persistAfterAcceptNow,
+    persistAfterRejectNow,
     deleteVersion,
     versions,
     versionsError,

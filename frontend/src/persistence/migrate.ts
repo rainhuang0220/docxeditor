@@ -14,7 +14,7 @@ import { parseLegacyDocumentJson, parseLegacyVersionsJson } from './validate.ts'
 import { countVersions, listVersions } from './versionStore.ts'
 
 export type MigrationResult =
-  | { status: 'skipped' }
+  | { status: 'skipped'; versionWarning?: string }
   | { status: 'noop' }
   | { status: 'migrated'; document: boolean; versions: number }
   | { status: 'failed'; reason: 'unavailable' | 'malformed' | 'write'; message: string }
@@ -112,13 +112,20 @@ export async function migrateLegacyPersistence(): Promise<MigrationResult> {
       const versionCount = await countVersions()
       if (versionCount === 0 && legacyVerRaw) {
         const parsedVersions = parseLegacyVersionsJson(legacyVerRaw)
-        if (parsedVersions && parsedVersions.length > 0) {
+        if (parsedVersions === null) {
+          if (legacyDocRaw) removeLegacyKey(LEGACY_DOCUMENT_KEY)
+          return { status: 'skipped', versionWarning: 'Could not migrate version history.' }
+        }
+        if (parsedVersions.length > 0) {
           const kept = newestFirst(parsedVersions).slice(0, MAX_VERSIONS)
           await writeBundle(null, kept)
           if (await verifyBundle(null, kept)) {
             removeLegacyKey(LEGACY_VERSIONS_KEY)
+          } else {
+            if (legacyDocRaw) removeLegacyKey(LEGACY_DOCUMENT_KEY)
+            return { status: 'skipped', versionWarning: 'Could not migrate version history.' }
           }
-        } else if (parsedVersions && parsedVersions.length === 0) {
+        } else {
           removeLegacyKey(LEGACY_VERSIONS_KEY)
         }
       } else if (versionCount > 0 && legacyVerRaw) {
@@ -126,7 +133,8 @@ export async function migrateLegacyPersistence(): Promise<MigrationResult> {
       }
     } catch (error) {
       const wrapped = wrapStorageError(error, 'migration')
-      return { status: 'failed', reason: 'write', message: wrapped.message }
+      if (legacyDocRaw) removeLegacyKey(LEGACY_DOCUMENT_KEY)
+      return { status: 'skipped', versionWarning: wrapped.message }
     }
     if (legacyDocRaw) removeLegacyKey(LEGACY_DOCUMENT_KEY)
     return { status: 'skipped' }

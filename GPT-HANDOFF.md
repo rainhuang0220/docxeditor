@@ -81,13 +81,15 @@ raw JSON
 - Authoritative current document HTML, `savedAt`, and version-history records live in IndexedDB (`docxeditor`, schema v1) via the `idb` package. React components do not call IndexedDB directly.
 - Theme, word goal, title, headers/footers, threads, model profiles, and API keys stay on localStorage. Do not migrate credentials here — that is I06.
 - Autosave is an 800ms trailing debounce plus a serialized coordinator (`scheduleSave` / `flushNow`). HTML is captured at flush time through `getPersistableDocumentHtml()`, never at schedule time.
-- An older in-flight save cannot become the durable document after a newer snapshot. Destructive replacements (New Document, import, version restore) call `beginDestructiveTransition()` so a queued save of the old document cannot overwrite the new one.
+- An older in-flight save cannot become the durable document after a newer snapshot. `flushNow()` returns a `SaveOutcome`; callers must not treat a void resolve as success.
+- Destructive replacements (New Document, import, version restore) go through `replaceCurrentDocument` / `prepareDestructiveDocumentChange`. A verified recovery version of the live committed HTML must succeed **before** generation bump or `setContent`. Failure blocks replacement. ReviewLock also keys off `isDocumentMutationLocked()` so edits during prepare cannot vanish from both current storage and history.
 - While AI review is pending, durable persistence is the committed pre-AI document A, never proposal B. Accept flushes B immediately. Reject flushes restored A immediately.
 - The editor must not mount default content, autosave, and then load the real document. Hydrate (and migrate) first; `resolveInitialHtml(loading|blocked)` is `null`.
 - Legacy `ai-doc-ide-document` / `ai-doc-ide-versions` migrate once: copy → verify → then delete those two keys only. Failed migration leaves legacy keys in place.
 - Version history is one IndexedDB record per version, max 20, pruning the oldest in the same write as version #21. Quota/write failures are surfaced. There is no silent collapse from 20 to 5.
 - StatusBar reflects coordinator state (`Saving…` / `Saved HH:MM` / `Unsaved` / `Save failed` / `Save unavailable`). A failed write is never shown as Saved.
-- `editor:save-version` is gone. Callers `await createVersion(description)` (or observe its rejection).
+- `editor:save-version` is gone. `createVersion` returns a `VersionOutcome`. Cmd/Ctrl+S toasts “Version saved” only after both the current-document flush and the version write succeed.
+- Accept/Reject remain in-memory decisions if durable flush fails; status must be Save failed, never Saved.
 
 ## What not to do
 

@@ -113,9 +113,100 @@ test('save failure is error/dirty, never clean/Saved', async () => {
     },
     onStatus: (status) => statuses.push(status),
   })
-  await coordinator.flushNow()
+  const outcome = await coordinator.flushNow()
+  assert.equal(outcome.ok, false)
+  if (!outcome.ok) assert.equal(outcome.kind, 'error')
   assert.equal(coordinator.getStatus().kind, 'error')
   assert.ok(statuses.every(status => status.kind !== 'clean'))
+  coordinator.dispose()
+})
+
+test('1. imperative flushNow reports success explicitly', async () => {
+  const coordinator = createSaveCoordinator({
+    getSnapshot: () => 'A',
+    persist: async () => ({ savedAt: '2026-09-15T12:00:00.000Z' }),
+  })
+  const outcome = await coordinator.flushNow()
+  assert.equal(outcome.ok, true)
+  if (outcome.ok) assert.equal(outcome.savedAt, '2026-09-15T12:00:00.000Z')
+  coordinator.dispose()
+})
+
+test('2. imperative flushNow reports write failure explicitly', async () => {
+  const coordinator = createSaveCoordinator({
+    getSnapshot: () => 'A',
+    persist: async () => {
+      throw new Error('write failed')
+    },
+  })
+  const outcome = await coordinator.flushNow()
+  assert.equal(outcome.ok, false)
+  if (!outcome.ok) {
+    assert.equal(outcome.kind, 'error')
+    assert.equal(outcome.message, 'write failed')
+  }
+  coordinator.dispose()
+})
+
+test('3. failed flushNow never reports clean', async () => {
+  const coordinator = createSaveCoordinator({
+    getSnapshot: () => 'A',
+    persist: async () => {
+      throw new Error('write failed')
+    },
+  })
+  await coordinator.flushNow()
+  assert.notEqual(coordinator.getStatus().kind, 'clean')
+  coordinator.dispose()
+})
+
+test('4. failed save followed by later successful retry reaches clean and persists latest state', async () => {
+  const writes: string[] = []
+  let fail = true
+  const coordinator = createSaveCoordinator({
+    getSnapshot: () => fail ? 'A' : 'B',
+    persist: async (html) => {
+      if (html === 'A' && fail) throw new Error('transient')
+      writes.push(html)
+      return { savedAt: 't' }
+    },
+  })
+  const first = await coordinator.flushNow()
+  assert.equal(first.ok, false)
+  assert.equal(coordinator.getStatus().kind, 'error')
+  fail = false
+  const second = await coordinator.flushNow()
+  assert.equal(second.ok, true)
+  assert.equal(coordinator.getStatus().kind, 'clean')
+  assert.deepEqual(writes, ['B'])
+  coordinator.dispose()
+})
+
+test('5. beginDestructiveTransition failure does not bump generation', async () => {
+  const coordinator = createSaveCoordinator({
+    getSnapshot: () => 'A',
+    persist: async () => {
+      throw new Error('write failed')
+    },
+  })
+  const before = coordinator.getGeneration()
+  const outcome = await coordinator.beginDestructiveTransition()
+  assert.equal(outcome.ok, false)
+  assert.equal(coordinator.getGeneration(), before)
+  coordinator.dispose()
+})
+
+test('6. failure does not clear dirty state', async () => {
+  const coordinator = createSaveCoordinator({
+    getSnapshot: () => 'A',
+    persist: async () => {
+      throw new Error('write failed')
+    },
+  })
+  await coordinator.flushNow()
+  assert.equal(coordinator.getStatus().kind, 'error')
+  const again = await coordinator.flushNow()
+  assert.equal(again.ok, false)
   coordinator.dispose()
 })
 

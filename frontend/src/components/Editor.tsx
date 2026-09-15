@@ -7,6 +7,7 @@ import { apiUrl } from '../utils/api'
 import { showToast } from './Toast'
 import { usePersistence } from '../persistence/PersistenceContext'
 import { DEFAULT_DOCUMENT_HTML, resolveInitialHtml } from '../persistence/hydrate'
+import { isDocumentMutationLocked } from '../ai/mutationLatch'
 
 interface PageStyle {
   width: string
@@ -43,7 +44,7 @@ export function Editor() {
 
 function EditorInner({ initialHtml }: { initialHtml: string }) {
   const { setEditor, setDocumentTitle, guardSession, isReviewPending, reviewPending } = useEditorContext()
-  const { createVersion, beginDestructiveTransition, flushNow } = usePersistence()
+  const { replaceCurrentDocument } = usePersistence()
   const isReviewPendingRef = useRef(isReviewPending)
   isReviewPendingRef.current = isReviewPending
   const [pageStyle, setPageStyle] = useState<PageStyle>({
@@ -58,7 +59,7 @@ function EditorInner({ initialHtml }: { initialHtml: string }) {
   const editor = useEditor({
     extensions: createDocxEditorExtensions({
       environment: 'interactive',
-      isLocked: () => isReviewPendingRef.current(),
+      isLocked: () => isReviewPendingRef.current() || isDocumentMutationLocked(),
     }),
     content: initialHtml,
     parseOptions: { preserveWhitespace: true },
@@ -91,27 +92,21 @@ function EditorInner({ initialHtml }: { initialHtml: string }) {
     const file = e.dataTransfer.files[0]
     if (!file || !file.name.endsWith('.docx')) return
     if (!guardSession('mutateDocument')) return
-    try {
-      await createVersion('Before import')
-    } catch {
-      /* version failure already surfaced */
-    }
     const formData = new FormData()
     formData.append('file', file)
     try {
       const res = await fetch(apiUrl('/api/import'), { method: 'POST', body: formData })
       const data = await res.json()
       if (data.html && editor) {
-        await beginDestructiveTransition()
-        editor.commands.setContent(data.html)
+        const result = await replaceCurrentDocument(data.html, 'Before import')
+        if (!result.replaced) return
         setDocumentTitle(file.name.replace(/\.docx$/i, ''))
-        await flushNow()
         showToast(`Opened "${file.name}"`, 'success')
       }
     } catch {
       showToast('Import failed. Is the backend running?', 'error')
     }
-  }, [editor, setDocumentTitle, guardSession, createVersion, beginDestructiveTransition, flushNow])
+  }, [editor, setDocumentTitle, guardSession, replaceCurrentDocument])
 
   const headerRef = useRef<HTMLDivElement>(null)
   const footerRef = useRef<HTMLSpanElement>(null)

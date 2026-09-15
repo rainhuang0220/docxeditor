@@ -34,10 +34,11 @@ test('save current → reload returns exact HTML', async () => {
   }
 })
 
-test('large data-URL document saves and reloads intact', async () => {
+test('24. actual ~6 MiB data-URL document round-trips through production IDB code exactly', async () => {
   await resetPersistence()
-  const payload = 'A'.repeat(512 * 1024)
+  const payload = 'A'.repeat(6 * 1024 * 1024)
   const html = `<p><img src="data:image/png;base64,${payload}"></p>`
+  assert.ok(html.length > 6 * 1024 * 1024)
   await saveCurrentDocument(html, '2026-09-15T12:00:00.000Z')
   const loaded = await loadCurrentDocument()
   assert.equal(loaded.status, 'ok')

@@ -40,6 +40,8 @@ export type HydrationResult =
       persistEnabled: boolean
       degraded: boolean
       message: string | null
+      /** Distinct from save status: current document may still be writable. */
+      migrationWarning?: string | null
     }
   | {
       phase: 'blocked'
@@ -54,3 +56,27 @@ export type LoadCurrentResult =
   | { status: 'ok'; record: CurrentDocumentRecord }
   | { status: 'missing' }
   | { status: 'malformed' }
+
+export type PersistFailureKind = 'error' | 'degraded' | 'skipped'
+
+export type SaveOutcome =
+  | { ok: true; savedAt: string }
+  | { ok: false; kind: PersistFailureKind; message: string }
+
+export type VersionOutcome =
+  | { ok: true; version: VersionRecord }
+  | { ok: false; kind: PersistFailureKind; message: string }
+
+export type DestructiveChangeOutcome =
+  | {
+      ok: true
+      savedAt: string
+      version: VersionRecord
+      applyReplacement: (fn: () => void) => void
+    }
+  | { ok: false; kind: PersistFailureKind; message: string }
+
+export type ReplaceDocumentOutcome =
+  | { ok: true; replaced: true; savedAt: string }
+  | { ok: false; replaced: false; kind: PersistFailureKind; message: string }
+  | { ok: false; replaced: true; kind: PersistFailureKind; message: string }

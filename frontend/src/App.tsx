@@ -16,7 +16,7 @@ import { PersistenceProvider, usePersistence } from './persistence/PersistenceCo
 import { useEffect } from 'react'
 
 function AppShell() {
-  const { createVersion, flushNow } = usePersistence()
+  const { saveManualVersion } = usePersistence()
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -31,13 +31,8 @@ function AppShell() {
       if ((e.metaKey || e.ctrlKey) && e.key === 's') {
         e.preventDefault()
         void (async () => {
-          try {
-            await flushNow()
-            await createVersion('Manual save')
-            showToast('Version saved', 'success')
-          } catch {
-            /* durable failure is toasted by the persistence layer */
-          }
+          const result = await saveManualVersion()
+          if (result.ok) showToast('Version saved', 'success')
         })()
       }
       if ((e.metaKey || e.ctrlKey) && e.key === 'p') {
@@ -47,7 +42,7 @@ function AppShell() {
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [createVersion, flushNow])
+  }, [saveManualVersion])
 
   return (
     <div className="flex flex-col h-screen">

@@ -1,5 +1,5 @@
-import { SkipPersistError } from './errors.ts'
-import { AUTOSAVE_DEBOUNCE_MS, type PersistenceStatus } from './types.ts'
+import { PersistenceError, SkipPersistError } from './errors.ts'
+import { AUTOSAVE_DEBOUNCE_MS, type PersistenceStatus, type SaveOutcome } from './types.ts'
 
 export interface PersistMeta {
   seq: number
@@ -26,8 +26,8 @@ export interface SaveCoordinatorOptions {
 
 export interface SaveCoordinator {
   scheduleSave(): void
-  flushNow(): Promise<void>
-  beginDestructiveTransition(): Promise<void>
+  flushNow(): Promise<SaveOutcome>
+  beginDestructiveTransition(): Promise<SaveOutcome>
   markClean(savedAt: string, html?: string): void
   markDegraded(message: string): void
   getStatus(): PersistenceStatus
@@ -50,7 +50,7 @@ export function createSaveCoordinator(options: SaveCoordinatorOptions): SaveCoor
   let lastAckedSeq = 0
   let dirty = false
   let disposed = false
-  let inFlight: Promise<void> | null = null
+  let inFlight: Promise<SaveOutcome> | null = null
   let timer: number | null = null
   let lastHtml: string | null = null
   let lastSavedAt: string | null = null
@@ -73,8 +73,23 @@ export function createSaveCoordinator(options: SaveCoordinatorOptions): SaveCoor
     setStatus({ kind: 'error', message })
   }
 
-  const runOnce = async () => {
-    if (disposed) return
+  const outcomeFromError = (error: unknown): SaveOutcome => {
+    if (error instanceof PersistenceError && error.code === 'unavailable') {
+      setStatus({ kind: 'degraded', message: error.message })
+      dirty = true
+      return { ok: false, kind: 'degraded', message: error.message }
+    }
+    const message = error instanceof Error && error.message
+      ? error.message
+      : 'Could not save the document.'
+    fail(message)
+    return { ok: false, kind: 'error', message }
+  }
+
+  const runOnce = async (): Promise<SaveOutcome> => {
+    if (disposed) {
+      return { ok: false, kind: 'error', message: 'Could not save the document.' }
+    }
     dirty = false
     const gen = generation
     const nextSeq = ++seq
@@ -86,63 +101,72 @@ export function createSaveCoordinator(options: SaveCoordinatorOptions): SaveCoor
         if (status.kind !== 'error' && status.kind !== 'degraded') {
           setStatus({ kind: 'dirty' })
         }
-        return
+        return { ok: false, kind: 'skipped', message: 'Cannot save while an AI proposal is pending.' }
       }
-      const message = error instanceof Error && error.message
-        ? 'Could not save the document.'
-        : 'Could not save the document.'
-      fail(message)
-      dirty = true
-      return
+      return outcomeFromError(error)
     }
 
     if (lastHtml === html && lastAckedSeq > 0 && lastSavedAt) {
       if (!dirty) setStatus({ kind: 'clean', savedAt: lastSavedAt })
-      return
+      return { ok: true, savedAt: lastSavedAt }
     }
 
     setStatus({ kind: 'saving' })
     try {
       const result = await options.persist(html, { seq: nextSeq, generation: gen })
-      if (disposed) return
+      if (disposed) {
+        return { ok: false, kind: 'error', message: 'Could not save the document.' }
+      }
       if (generation !== gen) {
         dirty = true
-        return
+        return { ok: false, kind: 'skipped', message: 'Save superseded.' }
       }
-      if (nextSeq < lastAckedSeq) return
+      if (nextSeq < lastAckedSeq) {
+        return lastSavedAt
+          ? { ok: true, savedAt: lastSavedAt }
+          : { ok: false, kind: 'skipped', message: 'Save superseded.' }
+      }
       lastAckedSeq = nextSeq
       lastHtml = html
       lastSavedAt = result.savedAt
       if (!dirty) setStatus({ kind: 'clean', savedAt: result.savedAt })
+      return { ok: true, savedAt: result.savedAt }
     } catch (error) {
       if (generation !== gen) {
         dirty = true
-        return
+        return { ok: false, kind: 'skipped', message: 'Save superseded.' }
       }
-      const message = error instanceof Error && error.message
-        ? error.message
-        : 'Could not save the document.'
-      fail(message)
+      return outcomeFromError(error)
     }
   }
 
-  const drain = async () => {
+  const drain = async (): Promise<SaveOutcome> => {
+    let last: SaveOutcome = lastSavedAt && !dirty
+      ? { ok: true, savedAt: lastSavedAt }
+      : { ok: false, kind: 'skipped', message: 'Nothing to save.' }
     while (!disposed && (dirty || inFlight)) {
       if (inFlight) {
-        await inFlight
+        last = await inFlight
         continue
       }
-      if (!dirty) return
+      if (!dirty) break
       const running = runOnce()
       inFlight = running
       try {
-        await running
+        last = await running
       } finally {
         if (inFlight === running) inFlight = null
       }
-      // A failed write stays dirty/unsaved, but must not spin forever.
-      if (status.kind === 'error' || status.kind === 'degraded') return
+      if (status.kind === 'error' || status.kind === 'degraded') return last
     }
+    if (status.kind === 'clean' && lastSavedAt) return { ok: true, savedAt: lastSavedAt }
+    if (status.kind === 'degraded') {
+      return { ok: false, kind: 'degraded', message: status.message }
+    }
+    if (status.kind === 'error') {
+      return { ok: false, kind: 'error', message: status.message }
+    }
+    return last
   }
 
   return {
@@ -160,22 +184,41 @@ export function createSaveCoordinator(options: SaveCoordinatorOptions): SaveCoor
     },
 
     async flushNow() {
-      if (disposed) return
+      if (disposed) {
+        return { ok: false, kind: 'error', message: 'Could not save the document.' }
+      }
+      if (status.kind === 'degraded') {
+        return { ok: false, kind: 'degraded', message: status.message }
+      }
       clearTimer()
       dirty = true
-      await drain()
+      return drain()
     },
 
     async beginDestructiveTransition() {
-      if (disposed) return
-      clearTimer()
-      if (dirty || inFlight) {
-        await drain()
+      if (disposed) {
+        return { ok: false, kind: 'error', message: 'Could not save the document.' }
       }
+      if (status.kind === 'degraded') {
+        return { ok: false, kind: 'degraded', message: status.message }
+      }
+      clearTimer()
+      let outcome: SaveOutcome
+      if (dirty || inFlight) {
+        dirty = true
+        outcome = await drain()
+      } else if (lastSavedAt) {
+        outcome = { ok: true, savedAt: lastSavedAt }
+      } else {
+        dirty = true
+        outcome = await drain()
+      }
+      if (!outcome.ok) return outcome
       generation += 1
       dirty = false
       lastHtml = null
       clearTimer()
+      return outcome
     },
 
     markClean(savedAt, html) {
