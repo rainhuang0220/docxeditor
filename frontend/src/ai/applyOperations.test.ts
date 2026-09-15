@@ -15,6 +15,7 @@ import {
 import { captureRequestContext, type RequestContext } from './requestContext.ts'
 import { decodeOperations } from './operations.ts'
 import { executeAiOperations, planOperations, reviewEventAfterExecute } from './applyOperations.ts'
+import { blockTexts, createHeadlessEditor, paragraphsHtml } from '../test/headlessEditor.ts'
 import { reduceReview, initialReviewState } from './reviewTransaction.ts'
 
 const schema = new Schema({
@@ -248,73 +249,110 @@ test('case 25: conflicting destructive edits to same original block rejected', (
 })
 
 test('case 26: safe multiple formatting ops accepted', () => {
-  const editor = createEditor(['Hello world'])
-  editor.view.dispatch(editor.state.tr.setSelection(TextSelection.create(editor.state.doc, 1, 6)))
-  const ctx = captureRequestContext({
-    requestId: 'req-1', source: 'selection', state: editor.state, html: 'Hello world', threadId: 't1', modelId: 'm1',
-  })
-  const planned = planOperations(typed([{ type: 'set_bold' }, { type: 'set_italic' }]), ctx, ctx.documentNode)
-  assert.equal(planned.ok, true)
-  const result = executeAiOperations(editor, [{ type: 'set_bold' }, { type: 'set_italic' }], ctx)
-  assert.equal(result.ok, true)
-  const $pos = editor.state.doc.resolve(2)
-  assert.equal($pos.marks().some(m => m.type.name === 'bold'), true)
-  assert.equal($pos.marks().some(m => m.type.name === 'italic'), true)
+  const html = '<p>Hello world</p>'
+  const h = createHeadlessEditor({ html })
+  try {
+    h.editor.commands.setTextSelection({ from: 1, to: 6 })
+    const ctx = captureRequestContext({
+      requestId: 'req-1', source: 'selection', state: h.editor.state, html, threadId: 't1', modelId: 'm1',
+    })
+    const planned = planOperations(typed([{ type: 'set_bold' }, { type: 'set_italic' }]), ctx, ctx.documentNode)
+    assert.equal(planned.ok, true)
+    const result = executeAiOperations(h.editor, [{ type: 'set_bold' }, { type: 'set_italic' }], ctx)
+    assert.equal(result.ok, true, result.ok === false ? result.reason : '')
+    const $pos = h.editor.state.doc.resolve(2)
+    assert.equal($pos.marks().some(m => m.type.name === 'bold'), true)
+    assert.equal($pos.marks().some(m => m.type.name === 'italic'), true)
+  } finally {
+    h.destroy()
+  }
 })
 
 test('case 27: distinct indexed edits resolve against ORIGINAL block numbering', () => {
   const labels = ['P0', 'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10']
-  const editor = createEditor(labels)
-  const ctx = capture(editor)
-  const result = executeAiOperations(editor, [
-    { type: 'replace_paragraph', paragraph_index: 2, content: '<p>R2</p>' },
-    { type: 'delete_paragraph', paragraph_index: 8 },
-    { type: 'insert_after_paragraph', paragraph_index: 10, content: '<p>NEW</p>' },
-  ], ctx)
-  assert.equal(result.ok, true, result.ok === false ? result.reason : '')
-  assert.deepEqual(textsOf(editor.state.doc), ['P0', 'P1', 'R2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P9', 'P10', 'NEW'])
+  const html = paragraphsHtml(labels)
+  const h = createHeadlessEditor({ html })
+  try {
+    const ctx = captureRequestContext({
+      requestId: 'req-1', source: 'panel', state: h.editor.state, html, threadId: 't1', modelId: 'm1',
+    })
+    const result = executeAiOperations(h.editor, [
+      { type: 'replace_paragraph', paragraph_index: 2, content: '<p>R2</p>' },
+      { type: 'delete_paragraph', paragraph_index: 8 },
+      { type: 'insert_after_paragraph', paragraph_index: 10, content: '<p>NEW</p>' },
+    ], ctx)
+    assert.equal(result.ok, true, result.ok === false ? result.reason : '')
+    assert.deepEqual(blockTexts(h.editor), ['P0', 'P1', 'R2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P9', 'P10', 'NEW'])
+  } finally {
+    h.destroy()
+  }
 })
 
 test('case 28: two valid operations commit together', () => {
-  const editor = createEditor(['A', 'B', 'C'])
-  const ctx = capture(editor)
-  const rev = getDocumentRevision(editor.state)
-  const result = executeAiOperations(editor, [
-    { type: 'replace_paragraph', paragraph_index: 0, content: '<p>X</p>' },
-    { type: 'delete_paragraph', paragraph_index: 2 },
-  ], ctx)
-  assert.equal(result.ok, true)
-  assert.deepEqual(textsOf(editor.state.doc), ['X', 'B'])
-  assert.equal(editor.dispatchCount, 1)
-  assert.equal(getDocumentRevision(editor.state), rev + 1)
+  const html = paragraphsHtml(['A', 'B', 'C'])
+  const h = createHeadlessEditor({ html })
+  try {
+    const ctx = captureRequestContext({
+      requestId: 'req-1', source: 'panel', state: h.editor.state, html, threadId: 't1', modelId: 'm1',
+    })
+    const rev = getDocumentRevision(h.editor.state)
+    h.resetCounts()
+    const result = executeAiOperations(h.editor, [
+      { type: 'replace_paragraph', paragraph_index: 0, content: '<p>X</p>' },
+      { type: 'delete_paragraph', paragraph_index: 2 },
+    ], ctx)
+    assert.equal(result.ok, true, result.ok === false ? result.reason : '')
+    assert.deepEqual(blockTexts(h.editor), ['X', 'B'])
+    assert.equal(h.docChangedDispatches, 1)
+    assert.equal(getDocumentRevision(h.editor.state), rev + 1)
+  } finally {
+    h.destroy()
+  }
 })
 
 test('case 29: three valid operations commit together', () => {
-  const editor = createEditor(['A', 'B', 'C', 'D'])
-  const ctx = capture(editor)
-  const result = executeAiOperations(editor, [
-    { type: 'replace_paragraph', paragraph_index: 0, content: '<p>X</p>' },
-    { type: 'delete_paragraph', paragraph_index: 2 },
-    { type: 'insert_after_paragraph', paragraph_index: 3, content: '<p>Z</p>' },
-  ], ctx)
-  assert.equal(result.ok, true)
-  assert.deepEqual(textsOf(editor.state.doc), ['X', 'B', 'D', 'Z'])
-  assert.equal(editor.dispatchCount, 1)
+  const html = paragraphsHtml(['A', 'B', 'C', 'D'])
+  const h = createHeadlessEditor({ html })
+  try {
+    const ctx = captureRequestContext({
+      requestId: 'req-1', source: 'panel', state: h.editor.state, html, threadId: 't1', modelId: 'm1',
+    })
+    h.resetCounts()
+    const result = executeAiOperations(h.editor, [
+      { type: 'replace_paragraph', paragraph_index: 0, content: '<p>X</p>' },
+      { type: 'delete_paragraph', paragraph_index: 2 },
+      { type: 'insert_after_paragraph', paragraph_index: 3, content: '<p>Z</p>' },
+    ], ctx)
+    assert.equal(result.ok, true, result.ok === false ? result.reason : '')
+    assert.deepEqual(blockTexts(h.editor), ['X', 'B', 'D', 'Z'])
+    assert.equal(h.docChangedDispatches, 1)
+  } finally {
+    h.destroy()
+  }
 })
 
 test('case 30: fail construction of operation N leaves zero canonical mutation', () => {
-  const editor = createEditor(['A', 'B'])
-  const ctx = capture(editor)
-  const before = editor.state.doc.toJSON()
-  const rev = getDocumentRevision(editor.state)
-  const result = executeAiOperations(editor, [
-    { type: 'replace_paragraph', paragraph_index: 0, content: '<p>X</p>' },
-    { type: 'insert_table', rows: 2, cols: 2 },
-  ], ctx)
-  assert.equal(result.ok, false)
-  assert.deepEqual(editor.state.doc.toJSON(), before)
-  assert.equal(getDocumentRevision(editor.state), rev)
-  assert.equal(editor.dispatchCount, 0)
+  const html = paragraphsHtml(['Keep', 'Change'])
+  const h = createHeadlessEditor({ html, without: ['table'] })
+  try {
+    h.editor.commands.setTextSelection(1)
+    const ctx = captureRequestContext({
+      requestId: 'req-1', source: 'panel', state: h.editor.state, html, threadId: 't1', modelId: 'm1',
+    })
+    const before = h.editor.state.doc.toJSON()
+    const rev = getDocumentRevision(h.editor.state)
+    h.resetCounts()
+    const result = executeAiOperations(h.editor, [
+      { type: 'replace_paragraph', paragraph_index: 1, content: '<p>X</p>' },
+      { type: 'insert_table', rows: 2, cols: 2 },
+    ], ctx)
+    assert.equal(result.ok, false)
+    assert.deepEqual(h.editor.state.doc.toJSON(), before)
+    assert.equal(getDocumentRevision(h.editor.state), rev)
+    assert.equal(h.docChangedDispatches, 0)
+  } finally {
+    h.destroy()
+  }
 })
 
 test('case 31/32/33: failed batch creates no review, history event, or revision', () => {
@@ -336,66 +374,83 @@ test('case 31/32/33: failed batch creates no review, history event, or revision'
 })
 
 test('case 34: successful atomic batch is one coherent AI history event', () => {
-  const editor = createEditor(['A0'])
-  editor.view.dispatch(closeHistory(editor.state.tr.replaceWith(0, editor.state.doc.content.size, docOf(['A1']).content)))
-  editor.view.dispatch(closeHistory(editor.state.tr.replaceWith(0, editor.state.doc.content.size, docOf(['A2']).content)))
-  const depth = undoDepth(editor.state)
-  const ctx = captureRequestContext({
-    requestId: 'req-1', source: 'panel', state: editor.state, html: 'A2', threadId: 't1', modelId: 'm1',
-  })
-  editor.dispatchCount = 0
-  const result = executeAiOperations(editor, [
-    { type: 'replace_paragraph', paragraph_index: 0, content: '<p>B1</p>' },
-    { type: 'insert_after_paragraph', paragraph_index: 0, content: '<p>B2</p>' },
-  ], ctx)
-  assert.equal(result.ok, true)
-  assert.equal(editor.dispatchCount, 1)
-  assert.equal(undoDepth(editor.state), depth + 1)
-  assert.deepEqual(textsOf(editor.state.doc), ['B1', 'B2'])
+  const h = createHeadlessEditor({ html: '<p>A0</p>' })
+  try {
+    h.editor.chain().command(({ tr, commands }) => { closeHistory(tr); return commands.setContent('<p>A1</p>') }).run()
+    h.editor.chain().command(({ tr, commands }) => { closeHistory(tr); return commands.setContent('<p>A2</p>') }).run()
+    const depth = undoDepth(h.editor.state)
+    const ctx = captureRequestContext({
+      requestId: 'req-1', source: 'panel', state: h.editor.state, html: '<p>A2</p>', threadId: 't1', modelId: 'm1',
+    })
+    h.resetCounts()
+    const result = executeAiOperations(h.editor, [
+      { type: 'replace_paragraph', paragraph_index: 0, content: '<p>B1</p>' },
+      { type: 'insert_after_paragraph', paragraph_index: 0, content: '<p>B2</p>' },
+    ], ctx)
+    assert.equal(result.ok, true, result.ok === false ? result.reason : '')
+    assert.equal(h.docChangedDispatches, 1)
+    assert.equal(undoDepth(h.editor.state), depth + 1)
+    assert.deepEqual(blockTexts(h.editor), ['B1', 'B2'])
+  } finally {
+    h.destroy()
+  }
 })
 
 test('case 35: Accept Undo after atomic batch returns to pre-AI document', () => {
-  const editor = createEditor(['A0'])
-  editor.view.dispatch(closeHistory(editor.state.tr.replaceWith(0, editor.state.doc.content.size, docOf(['A1']).content)))
-  editor.view.dispatch(closeHistory(editor.state.tr.replaceWith(0, editor.state.doc.content.size, docOf(['A2']).content)))
-  const ctx = captureRequestContext({
-    requestId: 'req-1', source: 'panel', state: editor.state, html: 'A2', threadId: 't1', modelId: 'm1',
-  })
-  const applied = executeAiOperations(editor, [
-    { type: 'replace_paragraph', paragraph_index: 0, content: '<p>B</p>' },
-  ], ctx)
-  assert.equal(applied.ok, true)
-  let next = editor.state
-  undo(editor.state, tr => { editor.view.dispatch(tr); next = editor.state })
-  assert.equal(next.doc.textContent, 'A2')
+  const h = createHeadlessEditor({ html: '<p>A0</p>' })
+  try {
+    h.editor.chain().command(({ tr, commands }) => { closeHistory(tr); return commands.setContent('<p>A1</p>') }).run()
+    h.editor.chain().command(({ tr, commands }) => { closeHistory(tr); return commands.setContent('<p>A2</p>') }).run()
+    const ctx = captureRequestContext({
+      requestId: 'req-1', source: 'panel', state: h.editor.state, html: '<p>A2</p>', threadId: 't1', modelId: 'm1',
+    })
+    const applied = executeAiOperations(h.editor, [
+      { type: 'replace_paragraph', paragraph_index: 0, content: '<p>B</p>' },
+    ], ctx)
+    assert.equal(applied.ok, true, applied.ok === false ? applied.reason : '')
+    undo(h.editor.state, tr => { h.editor.view.dispatch(tr) })
+    assert.equal(h.editor.getText().replace(/\n/g, ''), 'A2')
+  } finally {
+    h.destroy()
+  }
 })
 
 test('case 36: Reject history semantics restore pre-AI and cannot return B', () => {
-  const editor = createEditor(['A0'])
-  editor.view.dispatch(closeHistory(editor.state.tr.replaceWith(0, editor.state.doc.content.size, docOf(['A1']).content)))
-  editor.view.dispatch(closeHistory(editor.state.tr.replaceWith(0, editor.state.doc.content.size, docOf(['A2']).content)))
-  const a2 = editor.state.doc
-  const hist = checkpointHistory(editor.state)
-  const ctx = captureRequestContext({
-    requestId: 'req-1', source: 'panel', state: editor.state, html: 'A2', threadId: 't1', modelId: 'm1',
-  })
-  assert.equal(executeAiOperations(editor, [{ type: 'replace_paragraph', paragraph_index: 0, content: '<p>B</p>' }], ctx).ok, true)
-  editor.view.dispatch(authorizeRestoreTr(editor.state))
-  editor.view.dispatch(rejectRestoreTr(editor.state, a2, hist))
-  assert.equal(editor.state.doc.textContent, 'A2')
-  undo(editor.state, tr => { editor.view.dispatch(tr) })
-  assert.equal(editor.state.doc.textContent, 'A1')
-  assert.notEqual(editor.state.doc.textContent, 'B')
+  const h = createHeadlessEditor({ html: '<p>A0</p>' })
+  try {
+    h.editor.chain().command(({ tr, commands }) => { closeHistory(tr); return commands.setContent('<p>A1</p>') }).run()
+    h.editor.chain().command(({ tr, commands }) => { closeHistory(tr); return commands.setContent('<p>A2</p>') }).run()
+    const a2 = h.editor.state.doc
+    const hist = checkpointHistory(h.editor.state)
+    const ctx = captureRequestContext({
+      requestId: 'req-1', source: 'panel', state: h.editor.state, html: '<p>A2</p>', threadId: 't1', modelId: 'm1',
+    })
+    assert.equal(executeAiOperations(h.editor, [{ type: 'replace_paragraph', paragraph_index: 0, content: '<p>B</p>' }], ctx).ok, true)
+    h.editor.view.dispatch(authorizeRestoreTr(h.editor.state))
+    h.editor.view.dispatch(rejectRestoreTr(h.editor.state, a2, hist))
+    assert.equal(h.editor.getText().replace(/\n/g, ''), 'A2')
+    undo(h.editor.state, tr => { h.editor.view.dispatch(tr) })
+    assert.equal(h.editor.getText().replace(/\n/g, ''), 'A1')
+    assert.equal(h.editor.getText().includes('B'), false)
+  } finally {
+    h.destroy()
+  }
 })
 
 test('case 37: successful atomic batch does not violate ReviewLock', () => {
   let pending = false
-  const editor = createEditor(['A'], { lock: () => pending })
-  const ctx = capture(editor)
-  assert.equal(executeAiOperations(editor, [{ type: 'replace_paragraph', paragraph_index: 0, content: '<p>B</p>' }], ctx).ok, true)
-  pending = true
-  const blocked = editor.state.tr.insertText('X', 1)
-  const before = editor.state.doc.textContent
-  editor.view.dispatch(blocked)
-  assert.equal(editor.state.doc.textContent, before)
+  const html = '<p>A</p>'
+  const h = createHeadlessEditor({ html, isLocked: () => pending })
+  try {
+    const ctx = captureRequestContext({
+      requestId: 'req-1', source: 'panel', state: h.editor.state, html, threadId: 't1', modelId: 'm1',
+    })
+    assert.equal(executeAiOperations(h.editor, [{ type: 'replace_paragraph', paragraph_index: 0, content: '<p>B</p>' }], ctx).ok, true)
+    pending = true
+    const before = h.editor.state.doc.textContent
+    h.editor.commands.insertContent('X')
+    assert.equal(h.editor.state.doc.textContent, before)
+  } finally {
+    h.destroy()
+  }
 })

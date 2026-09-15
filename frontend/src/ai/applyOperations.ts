@@ -1,4 +1,4 @@
-import { Fragment, type Node, type Schema } from '@tiptap/pm/model'
+import type { Node, Schema } from '@tiptap/pm/model'
 import { type EditorState, type Transaction } from '@tiptap/pm/state'
 import { closeHistory } from '@tiptap/pm/history'
 import type { RequestContext } from './requestContext.ts'
@@ -34,6 +34,12 @@ export type ExecuteResult =
 
 type CommandMap = Record<string, (...args: unknown[]) => boolean>
 
+/**
+ * Production AI apply requires TipTap `editor.chain()`. Nested `commands.*`
+ * inside that custom command must mutate the shared transaction and must not
+ * call `view.dispatch` themselves. That invariant is proven by the real-TipTap
+ * integration suite, not assumed from TipTap docs.
+ */
 export interface AtomicEditor {
   readonly state: EditorState
   readonly schema: Schema
@@ -41,16 +47,19 @@ export interface AtomicEditor {
     dispatch: (tr: Transaction) => void
     readonly state: EditorState
   }
+  chain?: () => unknown
 }
 
 interface TipTapChain {
   command: (fn: (props: { tr: Transaction; commands: CommandMap }) => boolean) => { run: () => boolean }
 }
 
-function tipTapChain(editor: AtomicEditor): TipTapChain | null {
-  const chain = (editor as AtomicEditor & { chain?: () => TipTapChain }).chain
-  if (typeof chain !== 'function') return null
-  return chain.call(editor)
+function requireTipTapChain(editor: AtomicEditor): TipTapChain | ExecuteResult {
+  const chain = editor.chain
+  if (typeof chain !== 'function') {
+    return { ok: false, reason: 'AI apply requires a TipTap editor chain' }
+  }
+  return chain.call(editor) as TipTapChain
 }
 
 function fail(reason: string): PlanResult {
@@ -197,37 +206,6 @@ export function planOperations(
   return { ok: true, plan: { steps } }
 }
 
-function stripTags(html: string): string {
-  return html.replace(/<[^>]+>/g, '')
-}
-
-function htmlToNodes(schema: Schema, html: string): Node[] {
-  const source = html.trim()
-  if (!source) return [schema.node('paragraph')]
-  const nodes: Node[] = []
-  const re = /<(p|h[1-3]|blockquote)(?:\s[^>]*)?>([\s\S]*?)<\/\1>/gi
-  let matched = false
-  let m: RegExpExecArray | null
-  while ((m = re.exec(source))) {
-    matched = true
-    const tag = m[1].toLowerCase()
-    const text = stripTags(m[2])
-    const inline = text ? [schema.text(text)] : []
-    if (tag.startsWith('h') && schema.nodes.heading) {
-      nodes.push(schema.node('heading', { level: Number(tag.slice(1)) }, inline))
-    } else if (tag === 'blockquote' && schema.nodes.blockquote) {
-      nodes.push(schema.node('blockquote', null, [schema.node('paragraph', null, inline)]))
-    } else {
-      nodes.push(schema.node('paragraph', null, inline))
-    }
-  }
-  if (!matched) {
-    const text = stripTags(source)
-    nodes.push(schema.node('paragraph', null, text ? [schema.text(text)] : []))
-  }
-  return nodes
-}
-
 function mappedRange(tr: Transaction, from: number, to: number): { from: number; to: number } | null {
   const start = tr.mapping.map(from, -1)
   const end = tr.mapping.map(to, 1)
@@ -338,126 +316,28 @@ function applyStepWithCommands(tr: Transaction, commands: CommandMap, step: Reso
   return false
 }
 
-function applyMark(tr: Transaction, schema: Schema, name: string, from: number, to: number, attrs?: Record<string, unknown>): boolean {
-  const markType = schema.marks[name]
-  if (!markType) return false
-  tr.addMark(from, to, markType.create(attrs))
-  return true
-}
-
-function applyStepToTransaction(tr: Transaction, schema: Schema, step: ResolvedStep): boolean {
-  const { op, target } = step
-  if (op.type === 'replace_content' && target.class === 'document') {
-    tr.replaceWith(0, tr.doc.content.size, Fragment.from(htmlToNodes(schema, op.content)))
-    return true
-  }
-  if (target.class === 'block-index') {
-    const range = mappedRange(tr, target.from, target.to)
-    if (!range) return false
-    if (op.type === 'delete_paragraph') {
-      if (tr.doc.childCount <= 1) return false
-      tr.delete(range.from, range.to)
-      return true
-    }
-    if (op.type === 'replace_paragraph') {
-      tr.replaceWith(range.from, range.to, Fragment.from(htmlToNodes(schema, op.content)))
-      return true
-    }
-    if (op.type === 'insert_after_paragraph') {
-      const pos = tr.mapping.map(target.to, 1)
-      tr.insert(pos, Fragment.from(htmlToNodes(schema, op.content)))
-      return true
-    }
-  }
-  if (target.class === 'document-end' && op.type === 'insert_at_end') {
-    tr.insert(tr.mapping.map(target.pos, 1), Fragment.from(htmlToNodes(schema, op.content)))
-    return true
-  }
-  if (target.class === 'cursor') {
-    const pos = tr.mapping.map(target.pos)
-    if (op.type === 'insert_at_cursor') {
-      tr.insert(pos, Fragment.from(htmlToNodes(schema, op.content)))
-      return true
-    }
-    if (
-      op.type === 'insert_table' ||
-      op.type === 'insert_image' ||
-      op.type === 'insert_horizontal_rule' ||
-      op.type === 'insert_list' ||
-      op.type === 'insert_code_block' ||
-      op.type === 'insert_blockquote'
-    ) {
-      return false
-    }
-  }
-  if (target.class === 'selection') {
-    const range = mappedRange(tr, target.from, target.to)
-    if (!range) return false
-    if (op.type === 'replace_selection') {
-      const text = stripTags(op.content)
-      tr.insertText(text, range.from, range.to)
-      return true
-    }
-    if (op.type === 'set_bold') return applyMark(tr, schema, 'bold', range.from, range.to)
-    if (op.type === 'set_italic') return applyMark(tr, schema, 'italic', range.from, range.to)
-    if (op.type === 'set_underline') return applyMark(tr, schema, 'underline', range.from, range.to)
-    if (op.type === 'set_strikethrough') return applyMark(tr, schema, 'strike', range.from, range.to)
-    if (op.type === 'set_highlight') return applyMark(tr, schema, 'highlight', range.from, range.to)
-    if (op.type === 'set_link') return applyMark(tr, schema, 'link', range.from, range.to, { href: op.href })
-    if (op.type === 'set_heading') {
-      const heading = schema.nodes.heading
-      if (!heading) return false
-      tr.setBlockType(range.from, range.to, heading, { level: op.level })
-      return true
-    }
-    if (op.type === 'set_align' || op.type === 'set_font_family' || op.type === 'set_font_size' || op.type === 'set_color') {
-      return false
-    }
-  }
-  return false
-}
-
-function applyPlanToTransaction(tr: Transaction, schema: Schema, plan: ResolvedPlan): boolean {
-  try {
-    for (const step of plan.steps) {
-      if (!applyStepToTransaction(tr, schema, step)) return false
-    }
-    return true
-  } catch {
-    return false
-  }
-}
-
 function applyResolvedPlan(editor: AtomicEditor, plan: ResolvedPlan): ExecuteResult {
-  const chain = tipTapChain(editor)
-  if (chain) {
-    let failed = false
-    const ran = chain.command(({ tr, commands }) => {
-      closeHistory(tr)
-      try {
-        for (const step of plan.steps) {
-          if (!applyStepWithCommands(tr, commands, step)) {
-            tr.setMeta('preventDispatch', true)
-            failed = true
-            return false
-          }
+  const chain = requireTipTapChain(editor)
+  if ('ok' in chain) return chain
+  let failed = false
+  const ran = chain.command(({ tr, commands }) => {
+    closeHistory(tr)
+    try {
+      for (const step of plan.steps) {
+        if (!applyStepWithCommands(tr, commands, step)) {
+          tr.setMeta('preventDispatch', true)
+          failed = true
+          return false
         }
-        return true
-      } catch {
-        tr.setMeta('preventDispatch', true)
-        failed = true
-        return false
       }
-    }).run()
-    if (!ran || failed) return { ok: false, reason: 'atomic apply could not represent the batch' }
-    return { ok: true, operations: plan.steps.map(step => step.op) }
-  }
-
-  const tr = closeHistory(editor.state.tr)
-  if (!applyPlanToTransaction(tr, editor.schema, plan)) {
-    return { ok: false, reason: 'atomic apply could not represent the batch' }
-  }
-  editor.view.dispatch(tr)
+      return true
+    } catch {
+      tr.setMeta('preventDispatch', true)
+      failed = true
+      return false
+    }
+  }).run()
+  if (!ran || failed) return { ok: false, reason: 'atomic apply could not represent the batch' }
   return { ok: true, operations: plan.steps.map(step => step.op) }
 }
 
