@@ -11,6 +11,7 @@ import { showToast } from '../components/Toast'
 import {
   REVIEW_BLOCK_MESSAGE,
   initialReviewState,
+  canPersistCommittedDocument,
   persistableHtml,
   planDeleteModel,
   reduceReview,
@@ -85,6 +86,8 @@ interface EditorContextType {
   setReviewSnapshot: (html: string | null) => void
   getPersistableDocumentHtml: () => string
   isReviewPending: () => boolean
+  getReviewSnapshot: () => string | null
+  canPersistCommittedDocumentNow: () => boolean
 }
 
 const EditorContext = createContext<EditorContextType | null>(null)
@@ -161,6 +164,12 @@ export function EditorProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const isReviewPending = useCallback(() => reviewRef.current.phase === 'pending', [])
+
+  const getReviewSnapshot = useCallback(() => reviewSnapshotRef.current, [])
+
+  const canPersistCommittedDocumentNow = useCallback(() => {
+    return canPersistCommittedDocument(reviewRef.current.phase, reviewSnapshotRef.current)
+  }, [])
 
   const getPersistableDocumentHtml = useCallback(() => {
     return persistableHtml(reviewRef.current.phase, reviewSnapshotRef.current, editor?.getHTML() ?? '')
@@ -383,6 +392,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       startNewThread, switchThread, deleteThread, persistCurrentThread,
       models, activeModelId, setActiveModelId, upsertModel, deleteModel,
       reviewPending, guardSession, dispatchReview, setReviewSnapshot, getPersistableDocumentHtml, isReviewPending,
+      getReviewSnapshot, canPersistCommittedDocumentNow,
     }}>
       {children}
     </EditorContext.Provider>

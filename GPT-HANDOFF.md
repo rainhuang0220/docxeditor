@@ -21,13 +21,14 @@ Priority remains: document correctness > recoverability > persistence > truthful
 | In-flight latch | `frontend/src/ai/requestLatch.ts` |
 | UI apply / send | `frontend/src/components/AIPanel.tsx` |
 | Selection menu | `frontend/src/components/SelectionMenu.tsx` (UI only; calls `submitAIRequest`) |
+| Document persistence | `frontend/src/persistence/` (IndexedDB via `idb`; React talks to `PersistenceProvider`) |
 | Tools + conversion | `backend/ai_service.py` `_tool_call_to_operation` |
 
 `withgpt/` is a frozen pre-I01 snapshot (live-write, OOB append, `console.warn` skip). Do not patch it. Do not commit it.
 
 Tests: `cd frontend && npm test` and `python3 -m backend.test_continuation`.
 
-## Invariants (I01–I03)
+## Invariants (I01–I05)
 
 ### Streaming
 
@@ -75,6 +76,21 @@ raw JSON
 - Pending persistable HTML is the pre-edit snapshot, not the proposal.
 - Pending blocks send, new chat, thread/model switch, export.
 
+### Persistence (I05)
+
+- Authoritative current document HTML, `savedAt`, and version-history records live in IndexedDB (`docxeditor`, schema v1) via the `idb` package. React components do not call IndexedDB directly.
+- Theme, word goal, title, headers/footers, threads, model profiles, and API keys stay on localStorage. Do not migrate credentials here — that is I06.
+- Autosave is an 800ms trailing debounce plus a serialized coordinator (`scheduleSave` / `flushNow`). HTML is captured at flush time through `getPersistableDocumentHtml()`, never at schedule time.
+- An older in-flight save cannot become the durable document after a newer snapshot. `flushNow()` returns a `SaveOutcome`; callers must not treat a void resolve as success.
+- Destructive replacements (New Document, import, version restore) go through `replaceCurrentDocument` / `runDestructiveReplacement`. At most one replacement may be in flight. A second concurrent attempt is skipped. A verified recovery version of the live committed HTML must succeed **before** generation bump or `setContent`. `replaced: true` only if the editor document actually matches the intended replacement. ReviewLock keys off an exclusive mutation lease during prepare.
+- While AI review is pending, durable persistence is the committed pre-AI document A, never proposal B. Accept flushes B immediately. Reject flushes restored A immediately.
+- The editor must not mount default content, autosave, and then load the real document. Hydrate (and migrate) first; `resolveInitialHtml(loading|blocked)` is `null`.
+- Legacy `ai-doc-ide-document` / `ai-doc-ide-versions` migrate once: copy → verify → then delete those two keys only. Failed migration leaves legacy keys in place.
+- Version history is one IndexedDB record per version, max 20, pruning the oldest in the same write as version #21. Quota/write failures are surfaced. There is no silent collapse from 20 to 5.
+- StatusBar reflects coordinator state (`Saving…` / `Saved HH:MM` / `Unsaved` / `Save failed` / `Save unavailable`). A failed write is never shown as Saved.
+- `editor:save-version` is gone. `createVersion` returns a `VersionOutcome`. Cmd/Ctrl+S toasts “Version saved” only after both the current-document flush and the version write succeed.
+- Accept/Reject remain in-memory decisions if durable flush fails; status must be Save failed, never Saved.
+
 ## What not to do
 
 - Do not reintroduce live-write.
@@ -86,10 +102,9 @@ raw JSON
 
 ### Future work (do not execute from this file)
 
-1. **I05 — Document durability & recovery** — replace fragile localStorage/quota persistence.
-2. **I06 — Credential security + CSP** — stop storing full API keys in frontend localStorage; lock down CSP.
-3. **I07 — Self-contained desktop runtime** — real distributable backend, not system Python / Desktop checkout.
-4. **I08 — DOCX fidelity** — fixture-based semantic round-trip.
-5. **I09 — UI/UX hardening** — review/diff UX, accessibility, error/offline states.
+1. **I06 — Credential security + CSP** — stop storing full API keys in frontend localStorage; lock down CSP. Do not mix this into document persistence.
+2. **I07 — Self-contained desktop runtime** — real distributable backend, not system Python / Desktop checkout.
+3. **I08 — DOCX fidelity** — fixture-based semantic round-trip.
+4. **I09 — UI/UX hardening** — review/diff UX, accessibility, error/offline states.
 
 Also still true: DiffView is weak; headers/footers are placeholders.

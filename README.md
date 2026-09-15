@@ -27,7 +27,7 @@ Desktop packaging still expects a local Python backend. Browser `npm run dev` is
 
 ### Available now
 
-**Editor.** Headings H1–H3, bold/italic/underline/strike/highlight/sub/superscript, lists, tables, block images, links, code blocks, blockquotes, page breaks, fonts/size/color/alignment, find/replace (including regex), outline, local version snapshots, templates, dark mode, A4-style page chrome.
+**Editor.** Headings H1–H3, bold/italic/underline/strike/highlight/sub/superscript, lists, tables, block images, links, code blocks, blockquotes, page breaks, fonts/size/color/alignment, find/replace (including regex), outline, IndexedDB document + version snapshots, templates, dark mode, A4-style page chrome.
 
 **AI.** OpenAI and Anthropic native tool-calling. Chat streams in the panel. Selection and cursor are captured when you send. Model output is decoded, planned against the original document, and applied as one transaction. Destructive edits (`replace_content`, `replace_paragraph`, `delete_paragraph`) require Accept or Reject. Keys can be set in the app (stored at `~/.docxeditor/config.json`) or in `.env`.
 
@@ -142,7 +142,7 @@ cd frontend && npm test && npm run build && cd ..
 python3 -m backend.test_continuation
 ```
 
-The suite covers request identity, review/history isolation, runtime operation validation, target preflight, atomic application, and provider continuation (no live API keys).
+The suite covers request identity, review/history isolation, runtime operation validation, target preflight, atomic application, document durability, and provider continuation (no live API keys).
 
 ## Repository layout
 

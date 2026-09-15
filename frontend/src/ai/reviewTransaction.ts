@@ -87,8 +87,20 @@ export function persistableHtml(
   snapshot: string | null,
   editorHtml: string,
 ): string {
-  if (phase === 'pending' && snapshot !== null) return snapshot
+  if (phase === 'pending') {
+    // Fail closed: never return the live proposal when a snapshot is missing.
+    return snapshot ?? ''
+  }
   return editorHtml
+}
+
+/** False while review is pending without a committed pre-AI snapshot. */
+export function canPersistCommittedDocument(
+  phase: ReviewPhase,
+  snapshot: string | null,
+): boolean {
+  if (phase === 'pending') return snapshot !== null
+  return true
 }
 
 export function planDeleteModel(input: {
