@@ -65,4 +65,4 @@ python3 -m backend.test_continuation
 
 更完整的架构与安全说明见 [英文 README](README.md) 与 [`GPT-HANDOFF.md`](./GPT-HANDOFF.md)。
 
-无 LICENSE，默认保留所有权利。
+采用 [Apache License 2.0](LICENSE)（`Apache-2.0`）。

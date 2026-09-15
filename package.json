@@ -1,6 +1,7 @@
 {
   "name": "ai-document-ide",
   "private": true,
+  "license": "Apache-2.0",
   "scripts": {
     "frontend": "cd frontend && npm run dev",
     "backend": "bash start-backend.sh",
