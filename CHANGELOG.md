@@ -23,9 +23,17 @@ Engineering work after the v0.1.0 desktop preview. No new tagged app build yet.
 - Reject the whole batch on unknown types, bad fields, or out-of-range block indexes
 - Apply a valid multi-operation result as one ProseMirror transaction
 
+### Document durability
+
+- Store the current document and version history in IndexedDB instead of localStorage
+- Migrate legacy `ai-doc-ide-document` / `ai-doc-ide-versions` once, only after the copy verifies
+- Serialize autosave so an older write cannot replace a newer document
+- Keep pending AI proposals out of durable storage until Accept
+- Surface save failures in the status bar instead of polling localStorage
+
 ### Tests
 
-- Frontend suite for stream, review, lock, history, revision, decode, preflight, and atomic apply
+- Frontend suite for stream, review, lock, history, revision, decode, preflight, atomic apply, and document durability
 - Backend continuation smoke tests remain
 
 ## 0.1.0 — 2026-08-02

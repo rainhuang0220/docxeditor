@@ -1,41 +1,57 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState } from 'react'
 import { History, ChevronDown, RotateCcw, Eye, Trash2, X } from 'lucide-react'
 import { useEditorContext } from '../context/EditorContext'
-import { saveVersions, loadVersions } from '../utils/storage'
 import { DiffView } from './DiffView'
-import type { StoredVersion } from '../utils/storage'
+import { usePersistence } from '../persistence/PersistenceContext'
+import type { VersionRecord } from '../persistence/types'
 
 export function VersionPanel() {
-  const { editor, guardSession, getPersistableDocumentHtml } = useEditorContext()
-  const [versions, setVersions] = useState<StoredVersion[]>(() => loadVersions())
+  const { editor, guardSession } = useEditorContext()
+  const {
+    createVersion,
+    deleteVersion,
+    versions,
+    versionsError,
+    versionsBusy,
+    beginDestructiveTransition,
+    flushNow,
+  } = usePersistence()
   const [isOpen, setIsOpen] = useState(false)
-  const [diffVersion, setDiffVersion] = useState<StoredVersion | null>(null)
+  const [diffVersion, setDiffVersion] = useState<VersionRecord | null>(null)
+  const [saving, setSaving] = useState(false)
 
-  useEffect(() => {
-    saveVersions(versions)
-  }, [versions])
-
-  const saveVersion = useCallback((description: string) => {
-    if (!editor) return
-    const newVersion: StoredVersion = {
-      id: crypto.randomUUID(),
-      timestamp: new Date().toISOString(),
-      description,
-      content: getPersistableDocumentHtml(),
+  const saveVersion = async (description: string) => {
+    if (!editor || saving) return
+    setSaving(true)
+    try {
+      await createVersion(description)
+    } catch {
+      /* persistence layer surfaces the error */
+    } finally {
+      setSaving(false)
     }
-    setVersions(prev => [newVersion, ...prev])
-  }, [editor, getPersistableDocumentHtml])
-
-  const restoreVersion = (version: StoredVersion) => {
-    if (!editor) return
-    if (!guardSession('mutateDocument')) return
-    saveVersion('Auto-save before restore')
-    editor.commands.setContent(version.content)
   }
 
-  const deleteVersion = (id: string) => {
-    setVersions(prev => prev.filter(v => v.id !== id))
-    if (diffVersion?.id === id) setDiffVersion(null)
+  const restoreVersion = async (version: VersionRecord) => {
+    if (!editor) return
+    if (!guardSession('mutateDocument')) return
+    try {
+      await createVersion('Auto-save before restore')
+    } catch {
+      /* still restore; version failure is visible */
+    }
+    await beginDestructiveTransition()
+    editor.commands.setContent(version.content)
+    await flushNow()
+  }
+
+  const removeVersion = async (id: string) => {
+    try {
+      await deleteVersion(id)
+      if (diffVersion?.id === id) setDiffVersion(null)
+    } catch {
+      /* toasted */
+    }
   }
 
   const getRelativeTime = (timestamp: string) => {
@@ -47,16 +63,6 @@ export function VersionPanel() {
     if (hours < 24) return `${hours}h ago`
     return new Date(timestamp).toLocaleDateString()
   }
-
-  // Listen for save-version custom events
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail
-      saveVersion(detail?.description || 'Manual save')
-    }
-    window.addEventListener('editor:save-version', handler)
-    return () => window.removeEventListener('editor:save-version', handler)
-  }, [saveVersion])
 
   if (!isOpen) {
     return (
@@ -83,19 +89,25 @@ export function VersionPanel() {
           </div>
           <div className="flex items-center gap-1.5">
             <button
-              onClick={() => saveVersion('Manual save')}
+              onClick={() => { void saveVersion('Manual save') }}
               className="btn btn-primary"
+              disabled={saving || versionsBusy}
             >
-              Save
+              {saving ? 'Saving…' : 'Save'}
             </button>
             <button onClick={() => setIsOpen(false)} className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-tertiary)] transition-colors">
               <ChevronDown size={14} />
             </button>
           </div>
         </div>
+        {versionsError && (
+          <p className="px-3.5 py-2 text-[11px] text-[var(--color-danger)]">{versionsError}</p>
+        )}
         <div className="max-h-60 overflow-y-auto py-1">
           {versions.length === 0 ? (
-            <p className="p-3 text-xs text-[var(--color-text-muted)] text-center">No versions saved yet.</p>
+            <p className="p-3 text-xs text-[var(--color-text-muted)] text-center">
+              {versionsBusy ? 'Loading versions…' : 'No versions saved yet.'}
+            </p>
           ) : (
             versions.map(v => (
               <div key={v.id} className="flex items-center justify-between px-3.5 py-2 hover:bg-[var(--color-surface-secondary)] group transition-colors">
@@ -112,14 +124,14 @@ export function VersionPanel() {
                     <Eye size={13} />
                   </button>
                   <button
-                    onClick={() => restoreVersion(v)}
+                    onClick={() => { void restoreVersion(v) }}
                     className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-accent-text)] hover:bg-[var(--color-surface-secondary)] transition-colors"
                     title="Restore this version"
                   >
                     <RotateCcw size={13} />
                   </button>
                   <button
-                    onClick={() => deleteVersion(v.id)}
+                    onClick={() => { void removeVersion(v.id) }}
                     className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-danger)] hover:bg-[var(--color-surface-secondary)] opacity-0 group-hover:opacity-100 transition-all"
                     title="Delete version"
                   >
@@ -132,7 +144,6 @@ export function VersionPanel() {
         </div>
       </div>
 
-      {/* Diff overlay */}
       {diffVersion && (
         <div className="menu-surface fixed bottom-4 left-[316px] w-96 max-h-80 z-30 flex flex-col anim-pop" style={{ transformOrigin: 'bottom left' }}>
           <div className="flex items-center justify-between px-3.5 h-9 border-b border-[var(--color-border-light)]">

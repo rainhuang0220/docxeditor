@@ -2,9 +2,11 @@ import { useState } from 'react'
 import { FilePlus, X } from 'lucide-react'
 import { DOCUMENT_TEMPLATES } from '../templates/documents'
 import { useEditorContext } from '../context/EditorContext'
+import { usePersistence } from '../persistence/PersistenceContext'
 
 export function NewDocumentDialog() {
   const { editor, setDocumentTitle, guardSession } = useEditorContext()
+  const { createVersion, beginDestructiveTransition, flushNow } = usePersistence()
   const [isOpen, setIsOpen] = useState(false)
   const [confirmKey, setConfirmKey] = useState<string | null>(null)
 
@@ -17,15 +19,22 @@ export function NewDocumentDialog() {
       setConfirmKey(key)
       return
     }
-    doApply(key)
+    void doApply(key)
   }
 
-  const doApply = (key: string) => {
+  const doApply = async (key: string) => {
     if (!guardSession('mutateDocument')) return
     const template = DOCUMENT_TEMPLATES[key as keyof typeof DOCUMENT_TEMPLATES]
     if (template) {
+      try {
+        await createVersion('Before new document')
+      } catch {
+        /* version failure already surfaced */
+      }
+      await beginDestructiveTransition()
       editor!.commands.setContent(template.content)
       setDocumentTitle(template.name === 'Blank' ? 'Untitled Document' : template.name)
+      await flushNow()
     }
     setConfirmKey(null)
     setIsOpen(false)
@@ -81,7 +90,7 @@ export function NewDocumentDialog() {
               <button onClick={() => setConfirmKey(null)} className="btn btn-secondary">
                 Cancel
               </button>
-              <button onClick={() => doApply(confirmKey)} className="btn btn-primary">
+              <button onClick={() => { void doApply(confirmKey) }} className="btn btn-primary">
                 Replace
               </button>
             </div>
