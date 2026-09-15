@@ -161,4 +161,4 @@ A macOS Apple Silicon preview is on [GitHub Releases](https://github.com/rainhua
 
 ## License
 
-No license file is published. Treat the repository as all rights reserved until one is added.
+Licensed under the [Apache License 2.0](LICENSE) (`Apache-2.0`).
