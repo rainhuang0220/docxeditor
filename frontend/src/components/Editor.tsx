@@ -1,42 +1,5 @@
 import { useEditor, EditorContent } from '@tiptap/react'
-import StarterKit from '@tiptap/starter-kit'
-import TextAlign from '@tiptap/extension-text-align'
-import Underline from '@tiptap/extension-underline'
-import { TextStyle } from '@tiptap/extension-text-style'
-import Color from '@tiptap/extension-color'
-import ImageResize from 'tiptap-extension-resize-image'
-import { Table } from '@tiptap/extension-table'
-import { TableRow } from '@tiptap/extension-table-row'
-import { TableCell } from '@tiptap/extension-table-cell'
-
-const CustomTableCell = TableCell.extend({
-  addAttributes() {
-    return {
-      ...this.parent?.(),
-      backgroundColor: {
-        default: null,
-        parseHTML: element => element.getAttribute('data-background-color') || element.style.backgroundColor || null,
-        renderHTML: attributes => {
-          if (!attributes.backgroundColor) return {}
-          return { style: `background-color: ${attributes.backgroundColor}`, 'data-background-color': attributes.backgroundColor }
-        },
-      },
-    }
-  },
-})
-import { TableHeader } from '@tiptap/extension-table-header'
-import FontFamily from '@tiptap/extension-font-family'
-import Placeholder from '@tiptap/extension-placeholder'
-import Link from '@tiptap/extension-link'
-import Highlight from '@tiptap/extension-highlight'
-import Superscript from '@tiptap/extension-superscript'
-import Subscript from '@tiptap/extension-subscript'
-import { FontSize } from '../extensions/FontSize'
-import { KeyboardShortcuts } from '../extensions/KeyboardShortcuts'
-import { ClipboardExtension } from '../extensions/ClipboardSupport'
-import { PageBreak } from '../extensions/PageBreak'
-import { ReviewLock } from '../extensions/ReviewLock'
-import { DocumentRevision } from '../extensions/DocumentRevision'
+import { createDocxEditorExtensions } from '../extensions/createDocxEditorExtensions'
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useEditorContext } from '../context/EditorContext'
 import { loadDocument, setupAutoSave, saveHeaderFooter, loadHeaderFooter } from '../utils/storage'
@@ -75,34 +38,10 @@ export function Editor() {
     `
 
   const editor = useEditor({
-    extensions: [
-      StarterKit.configure({
-        heading: { levels: [1, 2, 3] },
-      }),
-      TextAlign.configure({ types: ['heading', 'paragraph'] }),
-      Underline,
-      TextStyle,
-      Color,
-      ImageResize.configure({ inline: false }),
-      Table.configure({ resizable: true }),
-      TableRow,
-      CustomTableCell,
-      TableHeader,
-      FontFamily,
-      FontSize,
-      KeyboardShortcuts,
-      ClipboardExtension,
-      Link.configure({ openOnClick: false }),
-      Highlight.configure({ multicolor: true }),
-      Superscript,
-      Subscript,
-      Placeholder.configure({ placeholder: 'Start typing your document...' }),
-      PageBreak,
-      ReviewLock.configure({
-        isLocked: () => isReviewPendingRef.current(),
-      }),
-      DocumentRevision,
-    ],
+    extensions: createDocxEditorExtensions({
+      environment: 'interactive',
+      isLocked: () => isReviewPendingRef.current(),
+    }),
     content: loadDocument() || defaultContent,
     // Preserve whitespace runs (e.g. Chinese first-line indents typed as
     // spaces) instead of collapsing them when content is parsed.

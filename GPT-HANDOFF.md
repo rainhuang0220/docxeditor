@@ -84,4 +84,12 @@ raw JSON
 
 ## Remaining product debt (not done)
 
-DOCX fidelity, real Python sidecar in the DMG, DiffView quality, plaintext keys, CSP, header/footer as real sections, provider UX, persistence beyond localStorage.
+### Future work (do not execute from this file)
+
+1. **I05 — Document durability & recovery** — replace fragile localStorage/quota persistence.
+2. **I06 — Credential security + CSP** — stop storing full API keys in frontend localStorage; lock down CSP.
+3. **I07 — Self-contained desktop runtime** — real distributable backend, not system Python / Desktop checkout.
+4. **I08 — DOCX fidelity** — fixture-based semantic round-trip.
+5. **I09 — UI/UX hardening** — review/diff UX, accessibility, error/offline states.
+
+Also still true: DiffView is weak; headers/footers are placeholders.
