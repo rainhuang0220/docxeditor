@@ -50,8 +50,8 @@
   --color-page-inset: #f4f4f5;
 
   /* Typography */
-  --font-sans: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --font-mono: 'Geist Mono', 'JetBrains Mono', 'SF Mono', monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 
   /* Radii — near-flat, per the template */
   --radius-hair: 2px;

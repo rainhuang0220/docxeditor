@@ -4,13 +4,12 @@ import {
   Image as ImageIcon, MessageSquare, Download,
   Heading1, Heading2, Heading3, Upload, Palette,
   Strikethrough, Highlighter, Link, Printer, Indent, Outdent, Code,
-  Superscript, Subscript, SeparatorHorizontal, Quote, RemoveFormatting,
+  Superscript, Subscript, SeparatorHorizontal, Quote, RemoveFormatting, Key,
 } from 'lucide-react'
 import { useRef, useEffect, useState } from 'react'
 import { useEditorContext } from '../context/EditorContext'
 import { NewDocumentDialog } from './NewDocumentDialog'
 import { ThemeToggle } from './ThemeToggle'
-import { ApiKeyDialog } from './ApiKeyDialog'
 import { ModelManager } from './ModelManager'
 import { FocusMode } from './FocusMode'
 import { TableOfContents } from './TableOfContents'
@@ -421,7 +420,9 @@ export function Toolbar() {
 
       <FocusMode />
       <TableOfContents />
-      <ApiKeyDialog />
+      <ToolButton onClick={() => window.dispatchEvent(new Event('open-model-manager'))} title="AI model credentials">
+        <Key size={16} />
+      </ToolButton>
       <ModelManager />
       <ThemeToggle />
 

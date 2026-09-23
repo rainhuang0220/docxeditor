@@ -1,10 +1,18 @@
 import { useState, useEffect } from 'react'
 import { X, Plus, Trash2, Check, AlertCircle, Cpu } from 'lucide-react'
 import { useEditorContext } from '../context/EditorContext'
-import { apiUrl } from '../utils/api'
-import type { ModelProfile } from '../utils/storage'
+import type { ModelProfile, ModelProvider } from '../utils/storage'
+import {
+  credentialStatusLine,
+  deleteCredential,
+  getCredentialStatus,
+  putCredential,
+  testStoredCredential,
+  type CredentialStatus,
+} from '../utils/credentials'
+import { draftFromStatus, reduceCredentialDraft } from '../utils/credentialEditor'
 
-const DEFAULT_MODELS: Record<'openai' | 'anthropic', string> = {
+const DEFAULT_MODELS: Record<ModelProvider, string> = {
   openai: 'gpt-4o',
   anthropic: 'claude-sonnet-4-20250514',
 }
@@ -13,15 +21,12 @@ function makeId() {
   return 'model-' + crypto.randomUUID().slice(0, 8)
 }
 
-function maskKey(key: string): string {
-  if (!key) return ''
-  return key.length > 7 ? key.slice(0, 7) + '…' : '***'
-}
-
-interface EditableProfile extends Omit<ModelProfile, 'keyHint'> {
-  /** A 7-char hint of the saved key, never overwritten until the user
-   *  types a new key. */
-  keyHint: string
+interface EditableProfile {
+  id: string
+  label: string
+  provider: ModelProvider
+  model: string
+  baseUrl: string
 }
 
 function emptyProfile(): EditableProfile {
@@ -31,16 +36,29 @@ function emptyProfile(): EditableProfile {
     provider: 'openai',
     model: '',
     baseUrl: '',
-    apiKey: '',
-    keyHint: '',
   }
 }
 
 export function ModelManager() {
-  const { models, activeModelId, setActiveModelId, upsertModel, deleteModel } = useEditorContext()
+  const { models, activeModelId, setActiveModelId, upsertModel, deleteModel, credentialWarning } = useEditorContext()
   const [isOpen, setIsOpen] = useState(false)
   const [editing, setEditing] = useState<EditableProfile | null>(null)
-  const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const [draftKey, setDraftKey] = useState('')
+  const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'error' | 'testing' | 'valid' | 'invalid'>('idle')
+  const [credential, setCredential] = useState<CredentialStatus | null>(null)
+  const [credentialDown, setCredentialDown] = useState(false)
+  const [listStatus, setListStatus] = useState<Record<string, CredentialStatus | null>>({})
+
+  const refreshList = async (current = models) => {
+    const entries = await Promise.all(current.map(async model => {
+      try {
+        return [model.id, await getCredentialStatus(model.id, model.provider)] as const
+      } catch {
+        return [model.id, null] as const
+      }
+    }))
+    setListStatus(Object.fromEntries(entries))
+  }
 
   useEffect(() => {
     const open = () => setIsOpen(true)
@@ -48,50 +66,116 @@ export function ModelManager() {
     return () => window.removeEventListener('open-model-manager', open)
   }, [])
 
-  const startNew = () => setEditing(emptyProfile())
-  const startEdit = (m: ModelProfile) => setEditing({ ...m, keyHint: m.keyHint })
+  useEffect(() => {
+    if (!isOpen) return
+    void refreshList()
+  }, [isOpen, models])
+
+  const loadEditorStatus = async (profile: EditableProfile) => {
+    setDraftKey(draftFromStatus(null))
+    try {
+      const next = await getCredentialStatus(profile.id, profile.provider)
+      setCredential(next)
+      setCredentialDown(false)
+      setDraftKey(draftFromStatus(next))
+    } catch {
+      setCredential(null)
+      setCredentialDown(true)
+    }
+  }
+
+  const startNew = () => {
+    const profile = emptyProfile()
+    setEditing(profile)
+    setStatus('idle')
+    setCredential(null)
+    setCredentialDown(false)
+    setDraftKey(reduceCredentialDraft(draftKey, { type: 'open' }))
+  }
+
+  const startEdit = (model: ModelProfile) => {
+    const profile: EditableProfile = {
+      id: model.id,
+      label: model.label,
+      provider: model.provider,
+      model: model.model,
+      baseUrl: model.baseUrl,
+    }
+    setEditing(profile)
+    setStatus('idle')
+    setDraftKey(reduceCredentialDraft(draftKey, { type: 'open' }))
+    void loadEditorStatus(profile)
+  }
+
+  const closeEditor = () => {
+    setDraftKey(reduceCredentialDraft(draftKey, { type: 'close' }))
+    setEditing(null)
+    setStatus('idle')
+    setCredential(null)
+    setCredentialDown(false)
+  }
 
   const handleSave = async () => {
     if (!editing) return
     setStatus('saving')
-    // Persist the new key only if the user actually typed one; otherwise
-    // preserve the previously-saved hint so the existing key survives.
-    const finalKey = editing.apiKey && editing.apiKey !== editing.keyHint ? editing.apiKey : ''
-    const finalHint = finalKey ? maskKey(finalKey) : editing.keyHint
     const profile: ModelProfile = {
       id: editing.id,
-      label: editing.label.trim() || `${editing.provider} ${editing.model}`,
+      label: editing.label.trim() || `${editing.provider} ${editing.model || 'model'}`,
       provider: editing.provider,
       model: editing.model.trim(),
       baseUrl: editing.baseUrl.trim(),
-      apiKey: finalKey,
-      keyHint: finalHint,
     }
-    upsertModel(profile)
-    // If this is the active model, push the new config to the backend so
-    // subsequent chats use it immediately.
-    if (profile.id === activeModelId) {
-      try {
-        await fetch(apiUrl('/api/config'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            provider: profile.provider,
-            api_key: profile.apiKey,
-            model: profile.model,
-            base_url: profile.baseUrl,
-          }),
-        })
-      } catch { /* backend may be down — UI state is still saved */ }
+    const typed = draftKey.trim()
+    try {
+      if (typed) {
+        const saved = await putCredential(profile.id, typed)
+        setCredential(saved)
+        setCredentialDown(false)
+        setDraftKey(reduceCredentialDraft(draftKey, { type: 'save-success' }))
+      }
+      upsertModel(profile)
+      setStatus('saved')
+      await refreshList(models.some(model => model.id === profile.id) ? models.map(model => model.id === profile.id ? profile : model) : [...models, profile])
+    } catch {
+      setStatus('error')
+      setCredentialDown(true)
     }
-    setStatus('saved')
-    setTimeout(() => { setStatus('idle'); setEditing(null) }, 600)
   }
 
-  const handleCancel = () => {
-    setEditing(null)
-    setStatus('idle')
+  const handleTest = async () => {
+    if (!editing) return
+    setStatus('testing')
+    try {
+      if (draftKey.trim()) {
+        const saved = await putCredential(editing.id, draftKey.trim())
+        setCredential(saved)
+        setDraftKey(reduceCredentialDraft(draftKey, { type: 'save-success' }))
+        upsertModel({
+          id: editing.id,
+          label: editing.label.trim() || 'Model',
+          provider: editing.provider,
+          model: editing.model.trim(),
+          baseUrl: editing.baseUrl.trim(),
+        })
+      }
+      const result = await testStoredCredential(editing.id, editing.provider, editing.model.trim(), editing.baseUrl.trim())
+      setStatus(result.ok ? 'valid' : 'invalid')
+      if (!result.ok && result.error) setCredentialDown(false)
+    } catch {
+      setStatus('invalid')
+    }
   }
+
+  const handleDelete = async (id: string) => {
+    try {
+      await deleteCredential(id)
+    } catch {
+      /* The profile can still leave the list. The backend copy remains until a later delete. */
+    }
+    deleteModel(id)
+  }
+
+  const editorLine = credentialStatusLine(credential, credentialDown)
 
   return (
     <>
@@ -105,52 +189,60 @@ export function ModelManager() {
 
       {isOpen && (
         <>
-          <div className="dialog-backdrop" onClick={() => { setIsOpen(false); handleCancel() }} />
+          <div className="dialog-backdrop" onClick={() => { setIsOpen(false); closeEditor() }} />
           <div className="dialog-panel w-[520px] max-w-[92vw] p-6">
             <div className="flex items-center justify-between mb-5">
               <h3 className="dialog-title">AI Models</h3>
-              <button onClick={() => { setIsOpen(false); handleCancel() }} className="dialog-close">
+              <button onClick={() => { setIsOpen(false); closeEditor() }} className="dialog-close">
                 <X size={15} />
               </button>
             </div>
 
+            {credentialWarning && (
+              <p className="mb-4 text-[12.5px] text-[var(--color-danger)] leading-relaxed">{credentialWarning}</p>
+            )}
+
             {!editing ? (
               <div className="space-y-4">
                 <p className="text-[12.5px] text-[var(--color-text-tertiary)] leading-relaxed">
-                  Configure multiple model profiles and switch between them from the chat panel. The active model is sent to the backend before each request.
+                  Configure model profiles and switch them from the chat panel. API keys stay on the backend.
                 </p>
 
                 <div className="space-y-2">
-                  {models.map(m => {
-                    const active = m.id === activeModelId
+                  {models.map(model => {
+                    const active = model.id === activeModelId
+                    const row = listStatus[model.id]
+                    const line = row === undefined
+                      ? ''
+                      : credentialStatusLine(row, row === null)
                     return (
                       <div
-                        key={m.id}
+                        key={model.id}
                         className={`flex items-center gap-3 px-3 py-2.5 border ${active ? 'border-[var(--color-accent-text)] bg-[var(--color-primary-subtle)]' : 'border-[var(--color-border)] bg-[var(--color-surface-secondary)]'} transition-colors`}
                       >
                         <button
-                          onClick={() => setActiveModelId(m.id)}
+                          onClick={() => setActiveModelId(model.id)}
                           className={`w-4 h-4 grid place-items-center border ${active ? 'bg-[var(--color-primary)] border-[var(--color-primary)]' : 'border-[var(--color-border-strong)]'} transition-colors`}
                           aria-label={active ? 'Active model' : 'Activate model'}
                         >
                           {active && <Check size={10} className="text-white" strokeWidth={3} />}
                         </button>
                         <div className="flex-1 min-w-0">
-                          <div className="text-[13.5px] font-medium text-[var(--color-text-primary)] tracking-[-0.01em] truncate">{m.label}</div>
+                          <div className="text-[13.5px] font-medium text-[var(--color-text-primary)] tracking-[-0.01em] truncate">{model.label}</div>
                           <div className="font-mono text-[11px] text-[var(--color-text-tertiary)] tracking-[0.04em] mt-0.5 truncate">
-                            {m.provider} · {m.model || 'default'}
-                            {m.keyHint && ` · ${m.keyHint}`}
+                            {model.provider} · {model.model || 'default'}
+                            {line ? ` · ${line}` : ''}
                           </div>
                         </div>
                         <button
-                          onClick={() => startEdit(m)}
+                          onClick={() => startEdit(model)}
                           className="text-[11px] font-mono uppercase tracking-[0.06em] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] px-2 py-1 transition-colors"
                         >
                           Edit
                         </button>
                         {models.length > 1 && (
                           <button
-                            onClick={() => deleteModel(m.id)}
+                            onClick={() => void handleDelete(model.id)}
                             className="text-[var(--color-text-muted)] hover:text-[var(--color-danger)] p-1 transition-colors"
                             aria-label="Delete model"
                           >
@@ -186,7 +278,7 @@ export function ModelManager() {
                   <label className="field-label">Provider</label>
                   <select
                     value={editing.provider}
-                    onChange={e => setEditing({ ...editing, provider: e.target.value as 'openai' | 'anthropic' })}
+                    onChange={e => setEditing({ ...editing, provider: e.target.value as ModelProvider })}
                     className="field-select"
                   >
                     <option value="openai">OpenAI (GPT-4o)</option>
@@ -208,15 +300,14 @@ export function ModelManager() {
                 </div>
 
                 <div>
-                  <label className="field-label">
-                    API Key <span className="text-[var(--color-text-muted)] normal-case tracking-normal font-sans">{editing.keyHint ? `(saved: ${editing.keyHint})` : ''}</span>
-                  </label>
+                  <label className="field-label">API Key</label>
                   <input
                     type="password"
-                    value={editing.apiKey}
-                    onChange={e => setEditing({ ...editing, apiKey: e.target.value })}
+                    value={draftKey}
+                    onChange={e => setDraftKey(reduceCredentialDraft(draftKey, { type: 'type', apiKey: e.target.value }))}
                     placeholder={editing.provider === 'openai' ? 'sk-...' : 'sk-ant-...'}
                     className="field-input"
+                    autoComplete="off"
                   />
                 </div>
 
@@ -233,15 +324,19 @@ export function ModelManager() {
                   />
                 </div>
 
-                <div className="pt-2 flex items-center justify-between">
-                  <div className="text-[12px] text-[var(--color-text-muted)]">
-                    {status === 'saved' && <span className="text-[var(--color-success)] inline-flex items-center gap-1"><Check size={12} /> Saved</span>}
+                <div className="pt-2 flex items-center justify-between gap-3">
+                  <div className="text-[12px] text-[var(--color-text-muted)] min-w-0">
+                    {status === 'valid' && <span className="text-[var(--color-success)] inline-flex items-center gap-1"><Check size={12} /> Key works</span>}
+                    {status === 'invalid' && <span className="text-[var(--color-danger)] inline-flex items-center gap-1"><AlertCircle size={12} /> Invalid key</span>}
                     {status === 'error' && <span className="text-[var(--color-danger)] inline-flex items-center gap-1"><AlertCircle size={12} /> Failed</span>}
-                    {status === 'idle' && editing.keyHint && 'Key is preserved unless you type a new one.'}
+                    {status === 'testing' && <span className="text-[var(--color-accent-text)]">Testing...</span>}
+                    {status === 'saving' && <span>Saving...</span>}
+                    {(status === 'idle' || status === 'saved') && <span className="truncate">{editorLine}</span>}
                   </div>
-                  <div className="flex gap-2">
-                    <button onClick={handleCancel} className="btn btn-secondary">Cancel</button>
-                    <button onClick={handleSave} disabled={status === 'saving'} className="btn btn-primary">
+                  <div className="flex gap-2 shrink-0">
+                    <button onClick={() => { setDraftKey(reduceCredentialDraft(draftKey, { type: 'cancel' })); closeEditor() }} className="btn btn-secondary">Cancel</button>
+                    <button onClick={() => void handleTest()} disabled={status === 'testing' || status === 'saving'} className="btn btn-secondary">Test</button>
+                    <button onClick={() => void handleSave()} disabled={status === 'saving'} className="btn btn-primary">
                       {status === 'saving' ? 'Saving...' : 'Save'}
                     </button>
                   </div>

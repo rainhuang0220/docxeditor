@@ -1,8 +1,10 @@
 import os
 import json
 import re
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Callable
 from openai import AsyncOpenAI
+
+from .provider_runtime import ResolvedProvider, redact, test_provider
 
 # How much of the document we send to the model up front. Blocks beyond this
 # budget are shown as one-line previews, and the model pages through the rest
@@ -23,6 +25,28 @@ MAX_CHECK_NUDGES = int(os.environ.get("AI_MAX_CHECK_NUDGES", "3"))
 # block, plus a total cap so thousands of previews can't flood the context.
 PREVIEW_BLOCK_CHARS = 80
 PREVIEW_TOTAL_CHARS = 20000
+
+ClientFactory = Callable[[ResolvedProvider], object]
+
+
+def _default_openai_client(spec: ResolvedProvider):
+    return AsyncOpenAI(api_key=spec.api_key, base_url=spec.base_url)
+
+
+def _default_anthropic_client(spec: ResolvedProvider):
+    import anthropic
+    return anthropic.AsyncAnthropic(api_key=spec.api_key, base_url=spec.base_url)
+
+
+def _bind_client(kind: str, provider: ResolvedProvider | None, client_factory: ClientFactory | None):
+    spec = provider or test_provider(kind)
+    if client_factory is not None:
+        client = client_factory(spec)
+    elif kind == "anthropic":
+        client = _default_anthropic_client(spec)
+    else:
+        client = _default_openai_client(spec)
+    return client, spec
 
 QUEUED_EDIT_ACK = (
     "Queued. This edit will be applied to the document after you finish all "
@@ -996,27 +1020,38 @@ def _anthropic_messages(message: str, history: list) -> list:
 # Non-streaming chat (fallback path + connection test)
 # ---------------------------------------------------------------------------
 
-async def process_chat(message: str, document: str, history: list, provider: str = None, selection: str = "") -> dict:
-    api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")
-
-    if not api_key:
+async def process_chat(
+    message: str,
+    document: str,
+    history: list,
+    provider: ResolvedProvider,
+    selection: str = "",
+    *,
+    client_factory: ClientFactory | None = None,
+) -> dict:
+    if not provider.api_key:
         return {
-            "reply": "No API key configured. Click the key icon in the toolbar to set your OpenAI or Anthropic API key.",
+            "reply": "No API key configured. Open AI models and add a key for this profile.",
             "operations": [],
         }
 
-    if not provider:
-        provider = "anthropic" if os.environ.get("ANTHROPIC_API_KEY") and not os.environ.get("OPENAI_API_KEY") else "openai"
-
-    if provider == "openai":
-        return await _openai_chat(message, document, history, selection)
-    else:
-        return await _anthropic_chat(message, document, history, selection)
+    if provider.provider == "openai":
+        return await _openai_chat(message, document, history, selection, provider=provider, client_factory=client_factory)
+    if provider.provider == "anthropic":
+        return await _anthropic_chat(message, document, history, selection, provider=provider, client_factory=client_factory)
+    return {"reply": "Unknown model provider.", "operations": []}
 
 
-async def _openai_chat(message: str, document: str, history: list, selection: str = "") -> dict:
-    base_url = os.environ.get("OPENAI_BASE_URL") or None
-    client = AsyncOpenAI(base_url=base_url) if base_url else AsyncOpenAI()
+async def _openai_chat(
+    message: str,
+    document: str,
+    history: list,
+    selection: str = "",
+    *,
+    provider: ResolvedProvider | None = None,
+    client_factory: ClientFactory | None = None,
+) -> dict:
+    client, spec = _bind_client("openai", provider, client_factory)
 
     doc_view = DocumentView(document)
     messages = _init_openai_messages(message, doc_view, history, selection)
@@ -1029,7 +1064,7 @@ async def _openai_chat(message: str, document: str, history: list, selection: st
     try:
         for _round in range(MAX_AGENT_ROUNDS):
             response = await client.chat.completions.create(
-                model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
+                model=spec.model,
                 messages=messages,
                 temperature=0.3,
                 tools=OPENAI_TOOLS,
@@ -1079,14 +1114,19 @@ async def _openai_chat(message: str, document: str, history: list, selection: st
         extra.extend(_coverage_finish_warnings(message, doc_view, collected))
         return _build_result(reply_text, collected, doc_view=doc_view, extra_warnings=extra or None)
     except Exception as e:
-        return {"reply": f"Error: {str(e)}", "operations": []}
+        return {"reply": f"Error: {redact(str(e), spec.api_key)}", "operations": []}
 
 
-async def _anthropic_chat(message: str, document: str, history: list, selection: str = "") -> dict:
-    import anthropic
-
-    base_url = os.environ.get("ANTHROPIC_BASE_URL") or None
-    client = anthropic.AsyncAnthropic(base_url=base_url) if base_url else anthropic.AsyncAnthropic()
+async def _anthropic_chat(
+    message: str,
+    document: str,
+    history: list,
+    selection: str = "",
+    *,
+    provider: ResolvedProvider | None = None,
+    client_factory: ClientFactory | None = None,
+) -> dict:
+    client, spec = _bind_client("anthropic", provider, client_factory)
 
     doc_view = DocumentView(document)
     system, messages = _init_anthropic(message, doc_view, history, selection)
@@ -1099,7 +1139,7 @@ async def _anthropic_chat(message: str, document: str, history: list, selection:
     try:
         for _round in range(MAX_AGENT_ROUNDS):
             response = await client.messages.create(
-                model=os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
+                model=spec.model,
                 max_tokens=MAX_TOKENS,
                 system=system,
                 messages=messages,
@@ -1151,7 +1191,7 @@ async def _anthropic_chat(message: str, document: str, history: list, selection:
         extra.extend(_coverage_finish_warnings(message, doc_view, collected))
         return _build_result("\n".join(reply_parts), collected, doc_view=doc_view, extra_warnings=extra or None)
     except Exception as e:
-        return {"reply": f"Error: {str(e)}", "operations": []}
+        return {"reply": f"Error: {redact(str(e), spec.api_key)}", "operations": []}
 
 
 # ---------------------------------------------------------------------------
@@ -1169,27 +1209,39 @@ async def _anthropic_chat(message: str, document: str, history: list, selection:
 #   error         {content}
 # ---------------------------------------------------------------------------
 
-async def process_chat_stream(message: str, document: str, history: list, provider: str = None, selection: str = "") -> AsyncGenerator[str, None]:
-    api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")
-
-    if not api_key:
-        yield _sse({"type": "error", "content": "No API key configured. Click the key icon in the toolbar to set your API key."})
+async def process_chat_stream(
+    message: str,
+    document: str,
+    history: list,
+    provider: ResolvedProvider,
+    selection: str = "",
+    *,
+    client_factory: ClientFactory | None = None,
+) -> AsyncGenerator[str, None]:
+    if not provider.api_key:
+        yield _sse({"type": "error", "content": "No API key configured. Open AI models and add a key for this profile."})
         return
 
-    if not provider:
-        provider = "anthropic" if os.environ.get("ANTHROPIC_API_KEY") and not os.environ.get("OPENAI_API_KEY") else "openai"
-
-    if provider == "openai":
-        async for chunk in _openai_stream(message, document, history, selection):
+    if provider.provider == "openai":
+        async for chunk in _openai_stream(message, document, history, selection, provider=provider, client_factory=client_factory):
+            yield chunk
+    elif provider.provider == "anthropic":
+        async for chunk in _anthropic_stream(message, document, history, selection, provider=provider, client_factory=client_factory):
             yield chunk
     else:
-        async for chunk in _anthropic_stream(message, document, history, selection):
-            yield chunk
+        yield _sse({"type": "error", "content": "Unknown model provider."})
 
 
-async def _openai_stream(message: str, document: str, history: list, selection: str = "") -> AsyncGenerator[str, None]:
-    base_url = os.environ.get("OPENAI_BASE_URL") or None
-    client = AsyncOpenAI(base_url=base_url) if base_url else AsyncOpenAI()
+async def _openai_stream(
+    message: str,
+    document: str,
+    history: list,
+    selection: str = "",
+    *,
+    provider: ResolvedProvider | None = None,
+    client_factory: ClientFactory | None = None,
+) -> AsyncGenerator[str, None]:
+    client, spec = _bind_client("openai", provider, client_factory)
 
     yield _sse({"type": "status", "stage": "reading"})
 
@@ -1205,7 +1257,7 @@ async def _openai_stream(message: str, document: str, history: list, selection: 
     try:
         for _round in range(MAX_AGENT_ROUNDS):
             stream = await client.chat.completions.create(
-                model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
+                model=spec.model,
                 messages=messages,
                 temperature=0.3,
                 tools=OPENAI_TOOLS,
@@ -1302,15 +1354,20 @@ async def _openai_stream(message: str, document: str, history: list, selection: 
         result = _build_result(reply_text, raw_tool_calls, doc_view=doc_view, extra_warnings=extra or None)
         yield _sse({"type": "done", "result": result})
     except Exception as e:
-        yield _sse({"type": "error", "content": str(e)})
+        yield _sse({"type": "error", "content": redact(str(e), spec.api_key)})
 
 
-async def _anthropic_stream(message: str, document: str, history: list, selection: str = "") -> AsyncGenerator[str, None]:
+async def _anthropic_stream(
+    message: str,
+    document: str,
+    history: list,
+    selection: str = "",
+    *,
+    provider: ResolvedProvider | None = None,
+    client_factory: ClientFactory | None = None,
+) -> AsyncGenerator[str, None]:
     """Stream Anthropic responses with native tool-calling support."""
-    import anthropic
-
-    base_url = os.environ.get("ANTHROPIC_BASE_URL") or None
-    client = anthropic.AsyncAnthropic(base_url=base_url) if base_url else anthropic.AsyncAnthropic()
+    client, spec = _bind_client("anthropic", provider, client_factory)
 
     yield _sse({"type": "status", "stage": "reading"})
 
@@ -1329,7 +1386,7 @@ async def _anthropic_stream(message: str, document: str, history: list, selectio
             # the helper enforces strict SSE event ordering (message_start first),
             # which breaks with API relays/proxies that emit non-standard streams.
             stream = await client.messages.create(
-                model=os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
+                model=spec.model,
                 max_tokens=MAX_TOKENS,
                 system=system,
                 messages=messages,
@@ -1427,4 +1484,4 @@ async def _anthropic_stream(message: str, document: str, history: list, selectio
         yield _sse({"type": "done", "result": result})
 
     except Exception as e:
-        yield _sse({"type": "error", "content": str(e)})
+        yield _sse({"type": "error", "content": redact(str(e), spec.api_key)})

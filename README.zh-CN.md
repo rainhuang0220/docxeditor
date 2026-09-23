@@ -25,7 +25,7 @@ Word 风格的桌面文档编辑器。AI 通过结构化操作改 TipTap/ProseMi
 
 **编辑器。** H1–H3、常见 marks、列表、表格、块级图片、链接、代码块、引用、分页符、字体/字号/颜色/对齐、查找替换（含正则）、大纲、IndexedDB 文档与版本快照、模板、深色模式。
 
-**AI。** OpenAI / Anthropic 原生 tool-calling。选区与光标在发送时冻结。模型输出经解码、按原始文档预检、一次事务提交。整篇替换 / 替换块 / 删除块需要 Accept 或 Reject。Key 可在应用内配置（`~/.docxeditor/config.json`）或写入 `.env`。
+**AI。** OpenAI / Anthropic 原生 tool-calling。选区与光标在发送时冻结。模型输出经解码、按原始文档预检、一次事务提交。整篇替换 / 替换块 / 删除块需要 Accept 或 Reject。API key 由后端保存：系统钥匙串可用时写入钥匙串，否则只留在当前后端进程内存。`OPENAI_API_KEY` 和 `ANTHROPIC_API_KEY` 仍是仅后端可用的回退。
 
 **DOCX。** 尽力导入导出标题、列表、表格、图片、超链接、分页符。不是无损往返。页眉页脚是界面占位。
 
@@ -33,7 +33,9 @@ Word 风格的桌面文档编辑器。AI 通过结构化操作改 TipTap/ProseMi
 
 - 不是 Word 替代品
 - v0.1.0 DMG 不带 Python 运行时；未签名
-- Key 明文存储；无协作、无 Windows/Linux 预编译包
+- 系统钥匙串不可用时，应用里输入的 key 只在当前后端进程有效，不会写入磁盘
+- 能访问本机后端的本地进程还没有身份校验
+- 无协作、无 Windows/Linux 预编译包
 
 ## 快速开始
 
@@ -61,6 +63,7 @@ npm run dev
 ```bash
 cd frontend && npm test && npm run build && cd ..
 python3 -m backend.test_continuation
+python3 -m backend.test_credentials
 ```
 
 更完整的架构与安全说明见 [英文 README](README.md) 与 [`GPT-HANDOFF.md`](./GPT-HANDOFF.md)。

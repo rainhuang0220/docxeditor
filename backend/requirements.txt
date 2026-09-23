@@ -6,3 +6,5 @@ anthropic
 pydantic
 python-multipart
 python-dotenv
+keyring
+httpx

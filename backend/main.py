@@ -1,108 +1,206 @@
 import os
 import re
-import json
+from contextlib import asynccontextmanager
 from urllib.parse import quote
+
 from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, Query, UploadFile, File
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse, Response
-from pydantic import BaseModel
+from fastapi.responses import JSONResponse, Response, StreamingResponse
+from pydantic import BaseModel, ConfigDict, Field
+from typing import Literal
+
 from .ai_service import process_chat, process_chat_stream
+from .credentials import (
+    CredentialStore,
+    CredentialStoreError,
+    InvalidProfileId,
+    open_credential_store,
+)
 from .export_service import export_docx, export_docx_to_bytes
 from .import_service import import_docx
-
-app = FastAPI(title="AI Document IDE Backend")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+from .legacy_config import default_config_path, migrate_legacy_config
+from .provider_runtime import (
+    ResolvedProvider,
+    concrete_base_url,
+    concrete_model,
+    redact,
 )
+
+# Vite devUrl is http://localhost:5173. Tauri 2.11 production webview origins,
+# from the current custom-protocol docs: macOS and Linux use tauri://localhost;
+# Windows uses http://tauri.localhost when useHttpsScheme is unset.
+ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "tauri://localhost",
+    "http://tauri.localhost",
+]
+
+SECRET_FIELD_NAMES = {"api_key", "apikey", "apiKey", "authorization", "bearer"}
+
+
+class HistoryTurn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    role: Literal["user", "assistant"]
+    content: str
 
 
 class ChatRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     message: str
     document: str = ""
     selection: str = ""
-    history: list = []
+    history: list[HistoryTurn] = []
+    profile_id: str
+    provider: Literal["openai", "anthropic"]
+    model: str = ""
+    base_url: str = ""
 
 
 class ExportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     html_content: str
     filename: str = "document.docx"
     page_settings: dict | None = None
 
 
-class ConfigRequest(BaseModel):
-    provider: str = "openai"
-    api_key: str = ""
+class PutCredentialRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    api_key: str = Field(min_length=1, max_length=4096)
+
+
+class TestCredentialRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    provider: Literal["openai", "anthropic"]
     model: str = ""
     base_url: str = ""
 
 
-# Config store (overrides .env values when set). Persisted to disk so the
-# API key survives backend restarts / app relaunches.
-_CONFIG_PATH = os.path.join(os.path.expanduser("~"), ".docxeditor", "config.json")
-_runtime_config: dict = {}
+def _store() -> CredentialStore:
+    return app.state.credentials
 
 
-def _set_env(name: str, value: str):
-    """Set an env var, or remove it so code falls back to defaults."""
-    if value:
-        os.environ[name] = value
-    else:
-        os.environ.pop(name, None)
+def _env_get(name: str) -> str | None:
+    value = os.environ.get(name)
+    if value is None:
+        return None
+    text = value.strip()
+    return text or None
 
 
-def _apply_config_to_env():
-    provider = _runtime_config.get("provider", "openai")
-    prefix = "OPENAI" if provider == "openai" else "ANTHROPIC"
-    if _runtime_config.get("api_key"):
-        os.environ[f"{prefix}_API_KEY"] = _runtime_config["api_key"]
-    _set_env(f"{prefix}_MODEL", _runtime_config.get("model", ""))
-    _set_env(f"{prefix}_BASE_URL", _runtime_config.get("base_url", ""))
+def _resolve_provider(profile_id: str, provider: str, model: str, base_url: str) -> ResolvedProvider | None:
+    resolved = _store().resolve(profile_id, provider)
+    if resolved is None or not resolved.secret:
+        return None
+    return ResolvedProvider(
+        provider=provider,
+        api_key=resolved.secret,
+        model=concrete_model(provider, model, _env_get),
+        base_url=concrete_base_url(provider, base_url, _env_get),
+        source=resolved.source,
+    )
 
 
-def _save_config_to_disk():
-    try:
-        os.makedirs(os.path.dirname(_CONFIG_PATH), exist_ok=True)
-        with open(_CONFIG_PATH, "w") as f:
-            json.dump(_runtime_config, f)
-    except OSError:
-        pass
+def _missing_credential(profile_id: str, provider: str) -> JSONResponse:
+    env_name = "OPENAI_API_KEY" if provider == "openai" else "ANTHROPIC_API_KEY"
+    return JSONResponse(
+        status_code=401,
+        content={
+            "error": {
+                "code": "credential_missing",
+                "provider": provider,
+                "profile_id": profile_id,
+                "message": (
+                    f"No {provider} API key is available for this profile. "
+                    f"Save a key for this profile, or set {env_name} on the backend process."
+                ),
+            }
+        },
+    )
 
 
-def _load_config_from_disk():
-    try:
-        with open(_CONFIG_PATH) as f:
-            saved = json.load(f)
-    except (OSError, ValueError):
-        return
-    if isinstance(saved, dict):
-        _runtime_config.update({k: v for k, v in saved.items() if v})
-        if _runtime_config.get("api_key"):
-            _apply_config_to_env()
+def _validation_mentions_secret(exc: RequestValidationError) -> bool:
+    for err in exc.errors():
+        loc = err.get("loc") or ()
+        for part in loc:
+            if str(part) in SECRET_FIELD_NAMES or str(part).lower() in {"api_key", "apikey"}:
+                return True
+    return False
 
 
-_load_config_from_disk()
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    store = open_credential_store()
+    app.state.credentials = store
+    app.state.client_factory = None
+    app.state.credential_tester = None
+    app.state.legacy_migration = migrate_legacy_config(default_config_path(), store)
+    yield
+
+
+app = FastAPI(title="AI Document IDE Backend", lifespan=_lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Content-Type"],
+)
+
+
+@app.exception_handler(RequestValidationError)
+async def reject_invalid_request(_request, exc: RequestValidationError):
+    if _validation_mentions_secret(exc):
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": {
+                    "code": "secret_field_rejected",
+                    "message": "api_key is not accepted on this route. Credentials are resolved on the server.",
+                }
+            },
+        )
+    return JSONResponse(
+        status_code=422,
+        content={"error": {"code": "invalid_request", "message": "Request was rejected."}},
+    )
 
 
 @app.post("/api/chat")
 async def chat(req: ChatRequest):
-    provider = _runtime_config.get("provider")
-    result = await process_chat(req.message, req.document, req.history, provider=provider, selection=req.selection)
-    return result
+    spec = _resolve_provider(req.profile_id, req.provider, req.model, req.base_url)
+    if spec is None:
+        return _missing_credential(req.profile_id, req.provider)
+    history = [turn.model_dump() for turn in req.history]
+    return await process_chat(
+        req.message,
+        req.document,
+        history,
+        spec,
+        selection=req.selection,
+        client_factory=app.state.client_factory,
+    )
 
 
 @app.post("/api/chat/stream")
 async def chat_stream(req: ChatRequest):
-    provider = _runtime_config.get("provider")
+    spec = _resolve_provider(req.profile_id, req.provider, req.model, req.base_url)
+    if spec is None:
+        return _missing_credential(req.profile_id, req.provider)
+    history = [turn.model_dump() for turn in req.history]
     return StreamingResponse(
-        process_chat_stream(req.message, req.document, req.history, provider=provider, selection=req.selection),
+        process_chat_stream(
+            req.message,
+            req.document,
+            history,
+            spec,
+            selection=req.selection,
+            client_factory=app.state.client_factory,
+        ),
         media_type="text/event-stream",
     )
 
@@ -114,9 +212,7 @@ async def export_doc(req: ExportRequest):
 
 
 def _content_disposition(filename: str) -> str:
-    """HTTP headers are latin-1 only, so a Chinese (or any non-ASCII) filename
-    must be sent as an RFC 5987 `filename*` parameter with an ASCII fallback,
-    otherwise Starlette raises UnicodeEncodeError and the export 500s."""
+    """HTTP headers are latin-1 only, so a non-ASCII filename is sent as RFC 5987 filename*."""
     ascii_name = re.sub(r"[^\x20-\x7e]", "_", filename).replace('"', "_").strip() or "document.docx"
     return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
 
@@ -138,52 +234,93 @@ async def import_doc(file: UploadFile = File(...)):
     return {"html": html, "filename": file.filename}
 
 
-@app.get("/api/config")
-async def get_config():
-    provider = _runtime_config.get("provider", "")
-    has_key = bool(_runtime_config.get("api_key") or os.getenv("OPENAI_API_KEY") or os.getenv("ANTHROPIC_API_KEY"))
-    # Show a hint of the key (first 7 chars masked) if set
-    key_hint = ""
-    raw_key = _runtime_config.get("api_key", "")
-    if raw_key:
-        key_hint = raw_key[:7] + "..." if len(raw_key) > 7 else "***"
-    elif not provider or provider == "openai":
-        env_key = os.getenv("OPENAI_API_KEY", "")
-        if env_key:
-            key_hint = env_key[:7] + "..." if len(env_key) > 7 else "***"
-            provider = "openai"
-    elif provider == "anthropic":
-        env_key = os.getenv("ANTHROPIC_API_KEY", "")
-        if env_key:
-            key_hint = env_key[:7] + "..." if len(env_key) > 7 else "***"
-
-    if not provider:
-        if os.getenv("ANTHROPIC_API_KEY"):
-            provider = "anthropic"
-        else:
-            provider = "openai"
-
-    model = _runtime_config.get("model", "")
-    base_url = _runtime_config.get("base_url", "")
-
-    return {"provider": provider, "has_key": has_key, "key_hint": key_hint, "model": model, "base_url": base_url}
+def _profile_or_400(profile_id: str):
+    try:
+        from .credentials import check_profile_id
+        return check_profile_id(profile_id), None
+    except InvalidProfileId:
+        return None, JSONResponse(status_code=400, content={"error": {"code": "invalid_profile", "message": "Invalid profile id."}})
 
 
-@app.post("/api/config")
-async def set_config(req: ConfigRequest):
-    _runtime_config["provider"] = req.provider
-    # An empty api_key means "keep the previously saved key" (the UI sends
-    # empty when the user didn't type a new key over the masked hint).
-    if req.api_key:
-        _runtime_config["api_key"] = req.api_key
-    _runtime_config["model"] = req.model
-    _runtime_config["base_url"] = req.base_url
+@app.put("/api/credentials/{profile_id}")
+async def put_credential(profile_id: str, body: PutCredentialRequest):
+    checked, error = _profile_or_400(profile_id)
+    if error is not None:
+        return error
+    try:
+        status = _store().put(checked, body.api_key)
+    except CredentialStoreError:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": {
+                    "code": "credential_store_failed",
+                    "message": "The credential could not be stored.",
+                }
+            },
+        )
+    return status.public_dict()
 
-    _apply_config_to_env()
-    _save_config_to_disk()
-    return {"status": "ok"}
+
+@app.get("/api/credentials/{profile_id}")
+async def get_credential(profile_id: str, provider: Literal["openai", "anthropic"] = Query(...)):
+    checked, error = _profile_or_400(profile_id)
+    if error is not None:
+        return error
+    return _store().status(checked, provider).public_dict()
+
+
+@app.delete("/api/credentials/{profile_id}")
+async def delete_credential(profile_id: str):
+    checked, error = _profile_or_400(profile_id)
+    if error is not None:
+        return error
+    try:
+        status = _store().delete_profile(checked)
+    except CredentialStoreError:
+        return JSONResponse(
+            status_code=503,
+            content={"error": {"code": "credential_store_failed", "message": "The credential could not be deleted."}},
+        )
+    return status.public_dict()
+
+
+async def _default_tester(spec: ResolvedProvider) -> None:
+    if spec.provider == "openai":
+        from .ai_service import _default_openai_client
+        client = _default_openai_client(spec)
+        await client.models.list()
+        return
+    from .ai_service import _default_anthropic_client
+    client = _default_anthropic_client(spec)
+    await client.messages.create(
+        model=spec.model,
+        max_tokens=1,
+        messages=[{"role": "user", "content": "OK"}],
+    )
+
+
+@app.post("/api/credentials/{profile_id}/test")
+async def test_credential(profile_id: str, body: TestCredentialRequest):
+    checked, error = _profile_or_400(profile_id)
+    if error is not None:
+        return error
+    spec = _resolve_provider(checked, body.provider, body.model, body.base_url)
+    if spec is None:
+        return {"ok": False, "error": "No API key is configured for this profile."}
+    tester = app.state.credential_tester or _default_tester
+    try:
+        await tester(spec)
+    except Exception as exc:
+        return {"ok": False, "error": redact(str(exc), spec.api_key)}
+    return {"ok": True}
 
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok"}
+    migration = getattr(app.state, "legacy_migration", None)
+    return {
+        "status": "ok",
+        "credential_storage": "keyring" if _store().keyring_available else "memory",
+        "legacy_migration": None if migration is None else migration.status,
+    }

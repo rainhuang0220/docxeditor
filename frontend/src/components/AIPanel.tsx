@@ -2,6 +2,8 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { ArrowUp, X, Check, XCircle, Square, Sparkles, Loader2, ChevronDown, Plus, MessageSquare, FileText, Languages, Wand2, ListChecks, AlignLeft, Heading1 } from 'lucide-react'
 import { useEditorContext } from '../context/EditorContext'
 import { apiUrl } from '../utils/api'
+import { buildChatRequest } from '../utils/chatRequest'
+import { getCredentialStatus } from '../utils/credentials'
 import { initialState, reduce, type ChatEvent, type Effect, type MachineState } from '../ai/streamMachine'
 import { type ReviewEffect } from '../ai/reviewTransaction'
 import type { Node as PmNode } from '@tiptap/pm/model'
@@ -131,7 +133,7 @@ function computeDiffStat(snapshotHtml: string, liveHtml: string, ops: AiOperatio
 
 export function AIPanel() {
   const { messages, addMessage, updateMessage, finalizeMessage, isAIPanelOpen, toggleAIPanel, editor, isSending, setIsSending,
-    activeThreadId, startNewThread, threads, persistCurrentThread, models, activeModelId, setActiveModelId, switchThread,
+    activeThreadId, startNewThread, threads, persistCurrentThread, models, activeModelId, setActiveModelId, switchThread, credentialWarning,
     guardSession, dispatchReview, setReviewSnapshot, isReviewPending, getMessages, registerAIRequestHandlers } = useEditorContext()
   const { createVersion, persistAfterAccept, persistAfterReject } = usePersistence()
   const [input, setInput] = useState('')
@@ -158,15 +160,6 @@ export function AIPanel() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, activity, review])
-
-  useEffect(() => {
-    if (isAIPanelOpen) {
-      fetch(apiUrl('/api/config'))
-        .then(res => res.json())
-        .then(data => setHasApiKey(data.has_key))
-        .catch(() => setHasApiKey(null))
-    }
-  }, [isAIPanelOpen])
 
   /* Persist the current message list to the active thread whenever it
      changes. Skip during streaming to avoid hammering localStorage on
@@ -195,28 +188,14 @@ export function AIPanel() {
     [models, activeModelId],
   )
 
-  /** Push the active model config to the backend so the next chat request
-   *  uses it. Runs whenever the user switches model. */
-  const syncActiveModelToBackend = useCallback(async () => {
-    if (!activeModel) return
-    try {
-      await fetch(apiUrl('/api/config'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          provider: activeModel.provider,
-          api_key: activeModel.apiKey,
-          model: activeModel.model,
-          base_url: activeModel.baseUrl,
-        }),
-      })
-      setHasApiKey(Boolean(activeModel.apiKey || activeModel.keyHint))
-    } catch { /* backend may be down — UI state is still saved */ }
-  }, [activeModel])
-
   useEffect(() => {
-    if (activeModel) syncActiveModelToBackend()
-  }, [activeModel, syncActiveModelToBackend])
+    if (!isAIPanelOpen || !activeModel) return
+    let cancelled = false
+    getCredentialStatus(activeModel.id, activeModel.provider)
+      .then(status => { if (!cancelled) setHasApiKey(status.has_key) })
+      .catch(() => { if (!cancelled) setHasApiKey(null) })
+    return () => { cancelled = true }
+  }, [isAIPanelOpen, activeModel])
 
   const switchModel = (id: string) => {
     setActiveModelId(id)
@@ -412,7 +391,11 @@ export function AIPanel() {
     setReviewSnapshot(ctx.documentHtml)
     void createVersion('Before AI edit')
 
-    await syncActiveModelToBackend()
+    const profile = models.find(model => model.id === activeModelId) || models[0]
+    if (!profile) {
+      finishRequest(requestId)
+      return
+    }
     if (opts.source === 'panel') setInput('')
     charsRef.current = 0
     addMessage('user', message)
@@ -436,12 +419,13 @@ export function AIPanel() {
     }
 
     try {
-      const payload = JSON.stringify({
+      const payload = JSON.stringify(buildChatRequest({
         message,
         document: ctx.documentHtml,
         selection: ctx.anchor.selectedText,
         history: getMessages().slice(-10).map(m => ({ role: m.role, content: m.content })),
-      })
+        profile,
+      }))
 
       const res = await fetch(apiUrl('/api/chat/stream'), {
         method: 'POST',
@@ -449,6 +433,20 @@ export function AIPanel() {
         body: payload,
         signal: controller.signal,
       })
+
+      if (res.status === 401 || res.status === 422) {
+        const data = await res.json().catch(() => null)
+        const text = data?.error?.message || (res.status === 401
+          ? 'No API key configured. Open AI models and add a key for this profile.'
+          : `AI service returned ${res.status}.`)
+        const out = dispatch({ type: 'error' })
+        if (!out.stale && out.prev.phase === 'streaming') {
+          applyStreamEffects(out.effects)
+          addMessage('assistant', text)
+        }
+        if (res.status === 401) setHasApiKey(false)
+        return
+      }
 
       if (!res.ok || !res.body) {
         const fallbackRes = await fetch(apiUrl('/api/chat'), {
@@ -585,7 +583,7 @@ export function AIPanel() {
         finishRequest(requestId)
       }
     }
-  }, [editor, addMessage, updateMessage, finalizeMessage, setIsSending, endStreamingUI, presentApplyOutcome, applyStreamEffects, syncActiveModelToBackend, activeThreadId, startNewThread, guardSession, setReviewSnapshot, getMessages, activeModelId, createVersion])
+  }, [editor, addMessage, updateMessage, finalizeMessage, setIsSending, endStreamingUI, presentApplyOutcome, applyStreamEffects, activeThreadId, startNewThread, guardSession, setReviewSnapshot, getMessages, activeModelId, models, createVersion])
 
   const handleSend = () => {
     if (cmdOpen) {
@@ -745,6 +743,11 @@ export function AIPanel() {
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-5 py-5 space-y-4" role="log" aria-live="polite" aria-label="Chat messages">
+        {credentialWarning && (
+          <p className="border border-[var(--color-danger)] bg-[var(--color-surface-secondary)] px-4 py-3 text-[12.5px] text-[var(--color-danger)] leading-relaxed">
+            {credentialWarning}
+          </p>
+        )}
         {hasApiKey === false && (
           <button
             onClick={() => window.dispatchEvent(new Event('open-model-manager'))}
