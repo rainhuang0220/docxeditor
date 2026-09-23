@@ -21,7 +21,34 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": {
+        "default-src": ["'self'"],
+        "script-src": ["'self'"],
+        "style-src": ["'self'", "'unsafe-inline'"],
+        "style-src-attr": ["'unsafe-inline'"],
+        "img-src": ["'self'", "data:", "blob:"],
+        "font-src": ["'self'"],
+        "connect-src": ["ipc:", "http://ipc.localhost", "http://127.0.0.1:8000"],
+        "object-src": ["'none'"],
+        "base-uri": ["'none'"],
+        "form-action": ["'self'"],
+        "frame-src": ["'none'"],
+        "frame-ancestors": ["'none'"]
+      },
+      "devCsp": {
+        "default-src": ["'self'"],
+        "script-src": ["'self'", "'unsafe-inline'"],
+        "style-src": ["'self'", "'unsafe-inline'"],
+        "style-src-attr": ["'unsafe-inline'"],
+        "img-src": ["'self'", "data:", "blob:"],
+        "font-src": ["'self'"],
+        "connect-src": ["'self'", "ipc:", "http://ipc.localhost", "http://localhost:5173", "http://127.0.0.1:5173", "ws://localhost:5173", "ws://127.0.0.1:5173"],
+        "object-src": ["'none'"],
+        "base-uri": ["'none'"],
+        "form-action": ["'self'"],
+        "frame-src": ["'none'"],
+        "frame-ancestors": ["'none'"]
+      }
     }
   },
   "bundle": {
@@ -33,6 +60,9 @@
       "../backend/ai_service.py": "backend/ai_service.py",
       "../backend/export_service.py": "backend/export_service.py",
       "../backend/import_service.py": "backend/import_service.py",
+      "../backend/credentials.py": "backend/credentials.py",
+      "../backend/legacy_config.py": "backend/legacy_config.py",
+      "../backend/provider_runtime.py": "backend/provider_runtime.py",
       "../backend/requirements.txt": "backend/requirements.txt"
     },
     "icon": [

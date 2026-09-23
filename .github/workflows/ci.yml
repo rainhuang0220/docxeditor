@@ -33,3 +33,4 @@ jobs:
           python-version: "3.12"
       - run: python3 -m pip install -r backend/requirements.txt
       - run: python3 -m backend.test_continuation
+      - run: python3 -m backend.test_credentials

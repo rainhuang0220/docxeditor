@@ -29,7 +29,7 @@ Desktop packaging still expects a local Python backend. Browser `npm run dev` is
 
 **Editor.** Headings H1–H3, bold/italic/underline/strike/highlight/sub/superscript, lists, tables, block images, links, code blocks, blockquotes, page breaks, fonts/size/color/alignment, find/replace (including regex), outline, IndexedDB document + version snapshots, templates, dark mode, A4-style page chrome.
 
-**AI.** OpenAI and Anthropic native tool-calling. Chat streams in the panel. Selection and cursor are captured when you send. Model output is decoded, planned against the original document, and applied as one transaction. Destructive edits (`replace_content`, `replace_paragraph`, `delete_paragraph`) require Accept or Reject. Keys can be set in the app (stored at `~/.docxeditor/config.json`) or in `.env`.
+**AI.** OpenAI and Anthropic native tool-calling. Chat streams in the panel. Selection and cursor are captured when you send. Model output is decoded, planned against the original document, and applied as one transaction. Destructive edits (`replace_content`, `replace_paragraph`, `delete_paragraph`) require Accept or Reject. API keys are stored by the backend: the OS keyring when it is available, otherwise in process memory for that backend session only. `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` remain backend-only fallbacks.
 
 **DOCX.** Best-effort import/export of headings, lists, tables, images, hyperlinks, and page breaks.
 
@@ -38,7 +38,8 @@ Desktop packaging still expects a local Python backend. Browser `npm run dev` is
 - Not a Word replacement. Headers/footers in the UI are placeholders, not OOXML sections.
 - DOCX round-trip is lossy (comments, native headers/footers, stylesheets, H4+ collapsed).
 - The v0.1.0 macOS arm64 DMG does not bundle a Python runtime. AI in that build needs a local FastAPI process (or this checkout at a well-known path). Unsigned; Gatekeeper may block first launch.
-- API keys are stored in plaintext. CSP is not locked down.
+- If the OS keyring is unavailable, a key typed in the app lasts only for the current backend process and is not written to disk
+- A local process that can call the backend is not authenticated yet
 - No Windows/Linux prebuilt. No collaboration. No local-model providers yet.
 
 ## Architecture
@@ -140,6 +141,7 @@ Output is under `src-tauri/target/release/bundle/`. The bundle copies Python sou
 ```bash
 cd frontend && npm test && npm run build && cd ..
 python3 -m backend.test_continuation
+python3 -m backend.test_credentials
 ```
 
 The suite covers request identity, review/history isolation, runtime operation validation, target preflight, atomic application, document durability, and provider continuation (no live API keys).

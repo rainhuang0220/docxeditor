@@ -31,6 +31,14 @@ Engineering work after the v0.1.0 desktop preview. No new tagged app build yet.
 - Keep pending AI proposals out of durable storage until Accept
 - Surface save failures in the status bar instead of polling localStorage
 
+### Credential ownership
+
+- Model profiles stored in the browser no longer include API keys
+- The backend stores a key in the OS keyring when that store works, or in process memory for the current session when it does not
+- Chat requests carry the model profile, not the key. Provider clients are built for that request
+- Legacy frontend profile keys and `~/.docxeditor/config.json` `api_key` move only after the new copy is read back
+- Browser and desktop origins are an explicit list. Production Tauri CSP is set, and the UI no longer loads Google Fonts
+
 ### Tests
 
 - Frontend suite for stream, review, lock, history, revision, decode, preflight, atomic apply, and document durability

@@ -79,7 +79,7 @@ raw JSON
 ### Persistence (I05)
 
 - Authoritative current document HTML, `savedAt`, and version-history records live in IndexedDB (`docxeditor`, schema v1) via the `idb` package. React components do not call IndexedDB directly.
-- Theme, word goal, title, headers/footers, threads, model profiles, and API keys stay on localStorage. Do not migrate credentials here — that is I06.
+- Theme, word goal, title, headers/footers, and threads stay on localStorage. Model profiles stored there are non-secret (`id`, `label`, `provider`, `model`, `baseUrl` only).
 - Autosave is an 800ms trailing debounce plus a serialized coordinator (`scheduleSave` / `flushNow`). HTML is captured at flush time through `getPersistableDocumentHtml()`, never at schedule time.
 - An older in-flight save cannot become the durable document after a newer snapshot. `flushNow()` returns a `SaveOutcome`; callers must not treat a void resolve as success.
 - Destructive replacements (New Document, import, version restore) go through `replaceCurrentDocument` / `runDestructiveReplacement`. At most one replacement may be in flight. A second concurrent attempt is skipped. A verified recovery version of the live committed HTML must succeed **before** generation bump or `setContent`. `replaced: true` only if the editor document actually matches the intended replacement. ReviewLock keys off an exclusive mutation lease during prepare.
@@ -91,20 +91,33 @@ raw JSON
 - `editor:save-version` is gone. `createVersion` returns a `VersionOutcome`. Cmd/Ctrl+S toasts “Version saved” only after both the current-document flush and the version write succeed.
 - Accept/Reject remain in-memory decisions if durable flush fails; status must be Save failed, never Saved.
 
+### Credentials (I06)
+
+- A persisted model profile is `id`, `label`, `provider`, `model`, `baseUrl`. `saveModelProfiles` writes those fields only.
+- The full key is accepted once by `PUT /api/credentials/{profile_id}`. `GET` returns presence, a last-four hint, and `keyring` / `memory` / `environment` / `unavailable`. It never returns the key.
+- Service `com.docxeditor.app`. Profile account `profile:<id>:<provider>`. An unscoped `profile:<id>` entry from this branch is copied only by an explicit rebind for that profile's known provider, and only after the new copy is read back. Legacy config keys use `legacy-provider:openai` or `legacy-provider:anthropic`.
+- Deleting a profile removes every profile-owned record only after a following read shows each one is gone. `PasswordDeleteError` is not proof of deletion. Environment variables and legacy provider slots are not deleted.
+- A custom base URL must be `https`, or `http` on a loopback host. Userinfo is rejected. This does not authenticate the local backend.
+- Resolution order for one request: profile credential, then that legacy slot, then `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`. The request does not include the key. Clients are constructed with the resolved key, model, and base URL. Profile changes do not write process environment variables.
+- If the OS keyring cannot be used, a new key stays in backend process memory and the UI says it is available for this session only. Do not write a plaintext fallback.
+- Legacy localStorage `apiKey` and `~/.docxeditor/config.json` `api_key` are removed only after a keyring read-back matches. Otherwise the only copy stays, with a warning.
+- CORS allows `http://localhost:5173`, `tauri://localhost`, and `http://tauri.localhost`. Production CSP is not null. Provider traffic stays on the backend, so CSP does not allow OpenAI or Anthropic origins.
+
 ## What not to do
 
 - Do not reintroduce live-write.
 - Do not reopen SelectionMenu as a second executor unless a regression proves it broken.
 - Do not treat backend tool JSON as typed without `decodeOperations`.
 - Do not start a MoonBit / engine rewrite from this file.
+- Do not put an API key back into localStorage, IndexedDB, `config.json`, or chat request bodies.
+- Do not start I07 authentication from a credential change.
 
 ## Remaining product debt (not done)
 
 ### Future work (do not execute from this file)
 
-1. **I06 — Credential security + CSP** — stop storing full API keys in frontend localStorage; lock down CSP. Do not mix this into document persistence.
-2. **I07 — Self-contained desktop runtime** — real distributable backend, not system Python / Desktop checkout.
-3. **I08 — DOCX fidelity** — fixture-based semantic round-trip.
-4. **I09 — UI/UX hardening** — review/diff UX, accessibility, error/offline states.
+1. **I07 — Self-contained authenticated desktop backend** — ship a real backend runtime, and authenticate the WebView to that process. CORS and CSP do not stop a local process that can call `127.0.0.1:8000` and send a Tauri origin. Do not add that protocol inside a credential or document change.
+2. **I08 — DOCX fidelity** — fixture-based semantic round-trip.
+3. **I09 — UI/UX hardening** — review/diff UX, accessibility, error/offline states.
 
 Also still true: DiffView is weak; headers/footers are placeholders.

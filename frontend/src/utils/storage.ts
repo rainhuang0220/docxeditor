@@ -36,9 +36,8 @@ export function loadHeaderFooter(): { header: string; footer: string } {
 }
 
 /* ─── Model profiles ──────────────────────────────────────────────
- * Users can configure multiple model presets (different providers,
- * models, base URLs, keys). The active profile is synced to the backend
- * before each chat request, so the user can swap models on the fly.
+ * Profiles are non-secret metadata. API keys live in the backend
+ * credential store, never in this JSON.
  */
 
 export type ModelProvider = 'openai' | 'anthropic'
@@ -49,14 +48,9 @@ export interface ModelProfile {
   provider: ModelProvider
   model: string
   baseUrl: string
-  /** Stored only on the frontend; never sent back to the backend until
-   *  the user explicitly activates this profile. */
-  apiKey: string
-  /** A 7-char masked hint, useful for displaying in the dropdown. */
-  keyHint: string
 }
 
-const MODELS_KEY = 'ai-doc-ide-models'
+export const MODELS_KEY = 'ai-doc-ide-models'
 const ACTIVE_MODEL_KEY = 'ai-doc-ide-active-model'
 
 export const DEFAULT_MODEL_PROFILES: ModelProfile[] = [
@@ -66,8 +60,6 @@ export const DEFAULT_MODEL_PROFILES: ModelProfile[] = [
     provider: 'openai',
     model: 'gpt-4o',
     baseUrl: '',
-    apiKey: '',
-    keyHint: '',
   },
   {
     id: 'default-claude-sonnet',
@@ -75,10 +67,32 @@ export const DEFAULT_MODEL_PROFILES: ModelProfile[] = [
     provider: 'anthropic',
     model: 'claude-sonnet-4-20250514',
     baseUrl: '',
-    apiKey: '',
-    keyHint: '',
   },
 ]
+
+export function publicProfile(profile: ModelProfile): ModelProfile {
+  return {
+    id: profile.id,
+    label: profile.label,
+    provider: profile.provider,
+    model: profile.model,
+    baseUrl: profile.baseUrl,
+  }
+}
+
+function readPublicProfile(raw: unknown): ModelProfile | null {
+  if (!raw || typeof raw !== 'object') return null
+  const record = raw as Record<string, unknown>
+  if (typeof record.id !== 'string' || !record.id) return null
+  if (record.provider !== 'openai' && record.provider !== 'anthropic') return null
+  return {
+    id: record.id,
+    label: typeof record.label === 'string' && record.label ? record.label : 'Model',
+    provider: record.provider,
+    model: typeof record.model === 'string' ? record.model : '',
+    baseUrl: typeof record.baseUrl === 'string' ? record.baseUrl : '',
+  }
+}
 
 export function loadModelProfiles(): ModelProfile[] {
   try {
@@ -86,7 +100,8 @@ export function loadModelProfiles(): ModelProfile[] {
     if (!raw) return DEFAULT_MODEL_PROFILES
     const parsed = JSON.parse(raw)
     if (!Array.isArray(parsed) || parsed.length === 0) return DEFAULT_MODEL_PROFILES
-    return parsed
+    const profiles = parsed.map(readPublicProfile).filter((profile): profile is ModelProfile => profile !== null)
+    return profiles.length > 0 ? profiles : DEFAULT_MODEL_PROFILES
   } catch {
     return DEFAULT_MODEL_PROFILES
   }
@@ -94,7 +109,8 @@ export function loadModelProfiles(): ModelProfile[] {
 
 export function saveModelProfiles(profiles: ModelProfile[]) {
   try {
-    localStorage.setItem(MODELS_KEY, JSON.stringify(profiles))
+    const payload = profiles.map(publicProfile)
+    localStorage.setItem(MODELS_KEY, JSON.stringify(payload))
   } catch (e) {
     console.warn('[DocxEditor] Failed to save model profiles:', e)
   }

@@ -4,9 +4,11 @@ import { Editor as TipTapEditor } from '@tiptap/react'
 import {
   loadThreads, saveThreads, loadActiveThreadId, saveActiveThreadId,
   loadModelProfiles, saveModelProfiles, loadActiveModelId, saveActiveModelId,
-  DEFAULT_MODEL_PROFILES,
+  publicProfile, DEFAULT_MODEL_PROFILES,
   type ModelProfile, type StoredThread,
 } from '../utils/storage'
+import { migrateLegacyModelSecrets, writeProfilesPreservingRetainedSecrets } from '../utils/legacyModelMigration'
+import { transferLegacyCredential } from '../utils/credentials'
 import { showToast } from '../components/Toast'
 import {
   REVIEW_BLOCK_MESSAGE,
@@ -79,6 +81,10 @@ interface EditorContextType {
   setActiveModelId: (id: string) => void
   upsertModel: (profile: ModelProfile) => void
   deleteModel: (id: string) => void
+  /** Drop a retained legacy id only after an explicit, verified discard. */
+  releaseRetainedLegacy: (id: string) => void
+  /** Set when a legacy key could not be moved into durable storage. */
+  credentialWarning: string | null
   /** True while an AI mutation is waiting for Accept/Reject. */
   reviewPending: boolean
   guardSession: (action: SessionAction) => boolean
@@ -132,9 +138,12 @@ export function EditorProvider({ children }: { children: ReactNode }) {
   const messagesRef = useRef<Message[]>([])
   const [messages, setMessages] = useState<Message[]>([])
 
-  /* Models */
+  /* Models. Initial load strips secrets; disk is rewritten only after migration. */
   const [models, setModels] = useState<ModelProfile[]>(() => loadModelProfiles())
   const [activeModelId, setActiveModelIdState] = useState<string>(() => loadActiveModelId())
+  const [modelsReady, setModelsReady] = useState(false)
+  const [credentialWarning, setCredentialWarning] = useState<string | null>(null)
+  const retainedLegacyRef = useRef<Set<string>>(new Set())
 
   const reviewRef = useRef(initialReviewState())
   const reviewSnapshotRef = useRef<string | null>(null)
@@ -338,14 +347,15 @@ export function EditorProvider({ children }: { children: ReactNode }) {
   }, [activeModelId, guardSession])
 
   const upsertModel = useCallback((profile: ModelProfile) => {
+    const clean = publicProfile(profile)
     setModels(prev => {
-      const idx = prev.findIndex(m => m.id === profile.id)
+      const idx = prev.findIndex(m => m.id === clean.id)
       if (idx >= 0) {
         const next = [...prev]
-        next[idx] = profile
+        next[idx] = clean
         return next
       }
-      return [...prev, profile]
+      return [...prev, clean]
     })
   }, [])
 
@@ -372,10 +382,34 @@ export function EditorProvider({ children }: { children: ReactNode }) {
     })
   }, [activeModelId, models])
 
-  // Persist models whenever they change
+  const releaseRetainedLegacy = useCallback((id: string) => {
+    const next = new Set(retainedLegacyRef.current)
+    next.delete(id)
+    retainedLegacyRef.current = next
+  }, [])
+
   useEffect(() => {
+    let cancelled = false
+    migrateLegacyModelSecrets(transferLegacyCredential).then(outcome => {
+      if (cancelled) return
+      retainedLegacyRef.current = new Set(outcome.retainedIds)
+      setModels(loadModelProfiles())
+      setCredentialWarning(outcome.warning)
+      setModelsReady(true)
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  // Persist non-secret profiles. While a legacy key is retained, keep that
+  // disk copy instead of letting the allowlist erase the only secret.
+  useEffect(() => {
+    if (!modelsReady) return
+    if (retainedLegacyRef.current.size > 0) {
+      writeProfilesPreservingRetainedSecrets(models, retainedLegacyRef.current)
+      return
+    }
     saveModelProfiles(models)
-  }, [models])
+  }, [models, modelsReady])
 
   const threadSummaries: ThreadSummary[] = threads.map(summarizeThread)
 
@@ -390,7 +424,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       threads: threadSummaries,
       activeThreadId,
       startNewThread, switchThread, deleteThread, persistCurrentThread,
-      models, activeModelId, setActiveModelId, upsertModel, deleteModel,
+      models, activeModelId, setActiveModelId, upsertModel, deleteModel, releaseRetainedLegacy, credentialWarning,
       reviewPending, guardSession, dispatchReview, setReviewSnapshot, getPersistableDocumentHtml, isReviewPending,
       getReviewSnapshot, canPersistCommittedDocumentNow,
     }}>
