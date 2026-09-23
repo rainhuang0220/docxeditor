@@ -18,6 +18,7 @@ import { PageSettingsDialog } from './PageSettingsDialog'
 import { InsertTableDialog } from './InsertTableDialog'
 import { apiUrl } from '../utils/api'
 import { showToast } from './Toast'
+import { usePersistence } from '../persistence/PersistenceContext'
 
 function ToolButton({ onClick, active, children, title }: {
   onClick: () => void
@@ -45,6 +46,7 @@ function Divider() {
 
 export function Toolbar() {
   const { editor, toggleAIPanel, documentTitle, setDocumentTitle, guardSession } = useEditorContext()
+  const { replaceCurrentDocument } = usePersistence()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const colorInputRef = useRef<HTMLInputElement>(null)
   const [linkUrl, setLinkUrl] = useState('')
@@ -125,7 +127,11 @@ export function Toolbar() {
       const res = await fetch(apiUrl('/api/import'), { method: 'POST', body: formData })
       const data = await res.json()
       if (data.html) {
-        editor.commands.setContent(data.html)
+        const result = await replaceCurrentDocument(data.html, 'Before import')
+        if (!result.replaced) {
+          e.target.value = ''
+          return
+        }
         const name = file.name.replace(/\.docx$/i, '')
         setDocumentTitle(name)
         showToast(`Opened "${file.name}"`, 'success')

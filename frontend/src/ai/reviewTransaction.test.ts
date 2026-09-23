@@ -5,6 +5,7 @@ import {
   guardReviewAction,
   initialReviewState,
   persistableHtml,
+  canPersistCommittedDocument,
   canExportDocument,
   planDeleteModel,
   reduceReview,
@@ -260,6 +261,10 @@ test('pending review persistable HTML is the request snapshot, not the provision
   assert.equal(persistableHtml('pending', '', PROPOSED), '')
   assert.equal(persistableHtml('idle', null, PROPOSED), PROPOSED)
   assert.equal(persistableHtml('committed', null, PROPOSED), PROPOSED)
+  assert.equal(persistableHtml('pending', null, PROPOSED), '')
+  assert.equal(canPersistCommittedDocument('pending', ORIGINAL), true)
+  assert.equal(canPersistCommittedDocument('pending', null), false)
+  assert.equal(canPersistCommittedDocument('idle', null), true)
 })
 
 test('deleting active model while review pending → blocked', () => {

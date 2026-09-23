@@ -2,10 +2,12 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { Minus, Plus, Target } from 'lucide-react'
 import { useEditorContext } from '../context/EditorContext'
 import { apiUrl } from '../utils/api'
+import { usePersistence } from '../persistence/PersistenceContext'
+import { formatPersistenceStatus } from '../persistence/status'
 
 export function StatusBar() {
   const { editor } = useEditorContext()
-  const [lastSaved, setLastSaved] = useState<string | null>(null)
+  const { status: persistenceStatus } = usePersistence()
   const [zoom, setZoom] = useState(100)
   const [, forceUpdate] = useState(0)
   const [backendOnline, setBackendOnline] = useState<boolean | null>(null)
@@ -22,22 +24,6 @@ export function StatusBar() {
     }
     checkBackend()
     const interval = setInterval(checkBackend, 15000)
-    return () => clearInterval(interval)
-  }, [])
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      try {
-        const raw = localStorage.getItem('ai-doc-ide-document')
-        if (raw) {
-          const data = JSON.parse(raw)
-          if (data.savedAt) {
-            const d = new Date(data.savedAt)
-            setLastSaved(d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
-          }
-        }
-      } catch { /* ignore */ }
-    }, 3000)
     return () => clearInterval(interval)
   }, [])
 
@@ -110,7 +96,18 @@ export function StatusBar() {
       )}
       <WordGoalButton wordGoal={wordGoal} setWordGoal={setWordGoal} />
       <div className="flex-1" />
-      {lastSaved && <span className="text-[var(--color-text-muted)] normal-case tracking-normal">Saved {lastSaved}</span>}
+      <span
+        className={`normal-case tracking-normal ${
+          persistenceStatus.kind === 'error' || persistenceStatus.kind === 'degraded'
+            ? 'text-[var(--color-danger)]'
+            : persistenceStatus.kind === 'dirty'
+              ? 'text-[var(--color-text-secondary)]'
+              : 'text-[var(--color-text-muted)]'
+        }`}
+        data-persistence-kind={persistenceStatus.kind}
+      >
+        {formatPersistenceStatus(persistenceStatus)}
+      </span>
       <span className={`flex items-center gap-1.5 normal-case tracking-normal ${backendOnline ? 'text-[var(--color-success)]' : 'text-[var(--color-danger)]'}`} title={backendOnline ? 'Backend connected' : 'Backend offline'}>
         <span className={`w-1.5 h-1.5 ${backendOnline ? 'bg-[var(--color-success)]' : 'bg-[var(--color-danger)]'}`} />
         {backendOnline ? 'AI Ready' : 'Offline'}

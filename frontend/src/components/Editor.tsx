@@ -2,9 +2,12 @@ import { useEditor, EditorContent } from '@tiptap/react'
 import { createDocxEditorExtensions } from '../extensions/createDocxEditorExtensions'
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useEditorContext } from '../context/EditorContext'
-import { loadDocument, setupAutoSave, saveHeaderFooter, loadHeaderFooter } from '../utils/storage'
+import { saveHeaderFooter, loadHeaderFooter } from '../utils/storage'
 import { apiUrl } from '../utils/api'
 import { showToast } from './Toast'
+import { usePersistence } from '../persistence/PersistenceContext'
+import { DEFAULT_DOCUMENT_HTML, resolveInitialHtml } from '../persistence/hydrate'
+import { isDocumentMutationLocked } from '../ai/mutationLatch'
 
 interface PageStyle {
   width: string
@@ -16,7 +19,32 @@ interface PageStyle {
 }
 
 export function Editor() {
-  const { setEditor, setDocumentTitle, getPersistableDocumentHtml, guardSession, isReviewPending, reviewPending } = useEditorContext()
+  const { hydration, startNewDocumentFromBlocked } = usePersistence()
+
+  if (hydration.phase === 'blocked') {
+    return (
+      <div className="py-6">
+        <div className="mx-auto document-page" style={{ width: '210mm', minHeight: '40vh' }}>
+          <p className="text-sm text-[var(--color-danger)] mb-3">{hydration.message}</p>
+          <p className="text-sm text-[var(--color-text-tertiary)] mb-4">
+            The saved document was not loaded, so it will not be overwritten.
+          </p>
+          <button type="button" className="btn btn-primary" onClick={startNewDocumentFromBlocked}>
+            Start new document
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  const initialHtml = resolveInitialHtml(hydration, DEFAULT_DOCUMENT_HTML)
+  if (initialHtml === null) return null
+  return <EditorInner initialHtml={initialHtml} />
+}
+
+function EditorInner({ initialHtml }: { initialHtml: string }) {
+  const { setEditor, setDocumentTitle, guardSession, isReviewPending, reviewPending } = useEditorContext()
+  const { replaceCurrentDocument } = usePersistence()
   const isReviewPendingRef = useRef(isReviewPending)
   isReviewPendingRef.current = isReviewPending
   const [pageStyle, setPageStyle] = useState<PageStyle>({
@@ -28,23 +56,12 @@ export function Editor() {
     paddingRight: '25.4mm',
   })
 
-  const defaultContent = `
-      <h1 style="text-align: center">Untitled Document</h1>
-      <p style="text-align: center"><em>Created with AI Document IDE</em></p>
-      <p></p>
-      <h2>Introduction</h2>
-      <p>Start writing here, or ask the AI assistant to help you create content.</p>
-      <p></p>
-    `
-
   const editor = useEditor({
     extensions: createDocxEditorExtensions({
       environment: 'interactive',
-      isLocked: () => isReviewPendingRef.current(),
+      isLocked: () => isReviewPendingRef.current() || isDocumentMutationLocked(),
     }),
-    content: loadDocument() || defaultContent,
-    // Preserve whitespace runs (e.g. Chinese first-line indents typed as
-    // spaces) instead of collapsing them when content is parsed.
+    content: initialHtml,
     parseOptions: { preserveWhitespace: true },
     editorProps: {
       attributes: {
@@ -53,14 +70,6 @@ export function Editor() {
     },
   })
 
-  // Auto-save
-  useEffect(() => {
-    if (!editor) return
-    const cleanup = setupAutoSave(() => getPersistableDocumentHtml())
-    return cleanup
-  }, [editor, getPersistableDocumentHtml])
-
-  // Listen for page style changes
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail
@@ -75,7 +84,6 @@ export function Editor() {
     return () => setEditor(null)
   }, [editor, setEditor])
 
-  // Drag-and-drop DOCX import
   const [isDragging, setIsDragging] = useState(false)
 
   const handleDrop = useCallback(async (e: React.DragEvent) => {
@@ -84,24 +92,22 @@ export function Editor() {
     const file = e.dataTransfer.files[0]
     if (!file || !file.name.endsWith('.docx')) return
     if (!guardSession('mutateDocument')) return
-    // Auto-save current state before replacing
-    window.dispatchEvent(new CustomEvent('editor:save-version', { detail: { description: 'Before import' } }))
     const formData = new FormData()
     formData.append('file', file)
     try {
       const res = await fetch(apiUrl('/api/import'), { method: 'POST', body: formData })
       const data = await res.json()
       if (data.html && editor) {
-        editor.commands.setContent(data.html)
+        const result = await replaceCurrentDocument(data.html, 'Before import')
+        if (!result.replaced) return
         setDocumentTitle(file.name.replace(/\.docx$/i, ''))
         showToast(`Opened "${file.name}"`, 'success')
       }
     } catch {
       showToast('Import failed. Is the backend running?', 'error')
     }
-  }, [editor, setDocumentTitle, guardSession])
+  }, [editor, setDocumentTitle, guardSession, replaceCurrentDocument])
 
-  // Header/footer persistence
   const headerRef = useRef<HTMLDivElement>(null)
   const footerRef = useRef<HTMLSpanElement>(null)
   const pageRef = useRef<HTMLDivElement>(null)
@@ -114,13 +120,11 @@ export function Editor() {
     saveHeaderFooter(h, f)
   }, [])
 
-  // Estimate page count from content height
   useEffect(() => {
     if (!editor || !pageRef.current) return
     const observer = new ResizeObserver(() => {
       const el = pageRef.current
       if (!el) return
-      // A4 page content height: 297mm - top/bottom padding
       const pageHeightPx = el.clientHeight
       const minHeightPx = parseFloat(getComputedStyle(el).minHeight) || pageHeightPx
       const pages = Math.max(1, Math.ceil(pageHeightPx / minHeightPx))
@@ -143,7 +147,6 @@ export function Editor() {
           <p className="text-[var(--color-primary)] font-medium text-sm">Drop .docx file to import</p>
         </div>
       )}
-      {/* Header */}
       <div
         ref={headerRef}
         className="mx-auto mb-0 border-b border-[var(--color-page-rule)] px-6 py-2 text-center text-[11px] text-[#949494]"
@@ -155,7 +158,6 @@ export function Editor() {
         {headerFooter.header || 'Document Header'}
       </div>
 
-      {/* Main page */}
       <div
         ref={pageRef}
         className="document-page"
@@ -168,8 +170,6 @@ export function Editor() {
           paddingRight: pageStyle.paddingRight,
         }}
         onMouseDown={e => {
-          // Clicking the blank page area (below the last paragraph) should
-          // place the caret at the end of the document, like Word does.
           if (e.target === pageRef.current && editor && editor.isEditable) {
             e.preventDefault()
             editor.chain().focus('end').run()
@@ -179,7 +179,6 @@ export function Editor() {
         <EditorContent editor={editor} />
       </div>
 
-      {/* Footer */}
       <div
         className="mx-auto mt-0 border-t border-[var(--color-page-rule)] px-6 py-2 flex justify-between text-[11px] text-[#949494]"
         style={{ width: pageStyle.width }}

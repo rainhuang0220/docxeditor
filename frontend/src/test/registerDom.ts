@@ -1,3 +1,4 @@
+import 'fake-indexeddb/auto'
 import { Window } from 'happy-dom'
 
 const win = new Window({ url: 'http://localhost/', width: 1024, height: 768 })
@@ -23,6 +24,14 @@ try {
   define('navigator', win.navigator)
 } catch {
   /* Node 24 navigator is a getter */
+}
+
+define('localStorage', win.localStorage)
+define('sessionStorage', win.sessionStorage)
+try {
+  Object.defineProperty(win, 'indexedDB', { value: globalThis.indexedDB, configurable: true })
+} catch {
+  /* ignore */
 }
 
 const rangeProto = (win as unknown as { Range: { prototype: Record<string, unknown> } }).Range?.prototype

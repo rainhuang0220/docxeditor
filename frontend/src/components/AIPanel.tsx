@@ -12,6 +12,7 @@ import { executeAiOperations, reviewEventAfterExecute } from '../ai/applyOperati
 import { INVALID_AI_EDIT_MESSAGE, type AiOperation } from '../ai/operations'
 import { tryBeginRequest, finishRequest, getInFlightRequestId, IN_FLIGHT_MESSAGE } from '../ai/requestLatch'
 import { showToast } from './Toast'
+import { usePersistence } from '../persistence/PersistenceContext'
 import Markdown from 'react-markdown'
 import { diffWords } from 'diff'
 import { ThreadList } from './ThreadList'
@@ -132,6 +133,7 @@ export function AIPanel() {
   const { messages, addMessage, updateMessage, finalizeMessage, isAIPanelOpen, toggleAIPanel, editor, isSending, setIsSending,
     activeThreadId, startNewThread, threads, persistCurrentThread, models, activeModelId, setActiveModelId, switchThread,
     guardSession, dispatchReview, setReviewSnapshot, isReviewPending, getMessages, registerAIRequestHandlers } = useEditorContext()
+  const { createVersion, persistAfterAccept, persistAfterReject } = usePersistence()
   const [input, setInput] = useState('')
   const [review, setReview] = useState<ReviewState | null>(null)
   const [activity, setActivity] = useState<Activity | null>(null)
@@ -287,7 +289,7 @@ export function AIPanel() {
         requestCtxRef.current = null
         setReviewSnapshot(null)
         editor?.setEditable(true)
-        window.dispatchEvent(new CustomEvent('editor:save-version', { detail: { description: 'AI edit accepted' } }))
+        void persistAfterAccept()
       } else if (effect === 'restore') {
         setReview(null)
         snapshotRef.current = null
@@ -297,6 +299,7 @@ export function AIPanel() {
         setReviewSnapshot(null)
         editor?.setEditable(true)
         addMessage('assistant', 'Changes rejected — the document was restored.')
+        void persistAfterReject()
       } else if (effect === 'clearSnapshot') {
         setReview(null)
         snapshotRef.current = null
@@ -307,7 +310,7 @@ export function AIPanel() {
         editor?.setEditable(true)
       }
     }
-  }, [editor, addMessage, setReviewSnapshot])
+  }, [editor, addMessage, setReviewSnapshot, persistAfterAccept, persistAfterReject])
 
   const applyFinishedOps = useCallback((result: any): 'applied' | 'stale' | 'invalid' | 'noop' => {
     if (!editor) return 'invalid'
@@ -407,7 +410,7 @@ export function AIPanel() {
     snapshotDocRef.current = ctx.documentNode
     histCheckpointRef.current = checkpointHistory(editorState)
     setReviewSnapshot(ctx.documentHtml)
-    window.dispatchEvent(new CustomEvent('editor:save-version', { detail: { description: 'Before AI edit' } }))
+    void createVersion('Before AI edit')
 
     await syncActiveModelToBackend()
     if (opts.source === 'panel') setInput('')
@@ -582,7 +585,7 @@ export function AIPanel() {
         finishRequest(requestId)
       }
     }
-  }, [editor, addMessage, updateMessage, finalizeMessage, setIsSending, endStreamingUI, presentApplyOutcome, applyStreamEffects, syncActiveModelToBackend, activeThreadId, startNewThread, guardSession, setReviewSnapshot, getMessages, activeModelId])
+  }, [editor, addMessage, updateMessage, finalizeMessage, setIsSending, endStreamingUI, presentApplyOutcome, applyStreamEffects, syncActiveModelToBackend, activeThreadId, startNewThread, guardSession, setReviewSnapshot, getMessages, activeModelId, createVersion])
 
   const handleSend = () => {
     if (cmdOpen) {
