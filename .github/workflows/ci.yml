@@ -34,3 +34,22 @@ jobs:
       - run: python3 -m pip install -r backend/requirements.txt
       - run: python3 -m backend.test_continuation
       - run: python3 -m backend.test_credentials
+      - run: python3 -m backend.test_desktop_runtime
+
+  package-macos:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: bash packaging/build-sidecar.sh
+      - run: DOCXEDITOR_SIDECAR_BIN=src-tauri/binaries/docxeditor-backend-aarch64-apple-darwin python3 -m backend.test_desktop_runtime
+      - run: cargo check --manifest-path src-tauri/Cargo.toml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: docxeditor-backend-aarch64-apple-darwin
+          path: src-tauri/binaries/docxeditor-backend-aarch64-apple-darwin
+          if-no-files-found: error

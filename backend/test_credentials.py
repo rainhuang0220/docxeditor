@@ -9,6 +9,7 @@ import warnings
 from pathlib import Path
 
 os.environ["DOCXEDITOR_KEYRING"] = "disabled"
+os.environ["DOCXEDITOR_DEV_INSECURE"] = "1"
 _ISOLATED_HOME = tempfile.mkdtemp(prefix="docxeditor-cred-")
 os.environ["DOCXEDITOR_CONFIG_PATH"] = str(Path(_ISOLATED_HOME) / "config.json")
 
@@ -583,7 +584,7 @@ def test_csp_and_fonts():
     for banned in ("api.openai.com", "api.anthropic.com", "fonts.googleapis.com", "fonts.gstatic.com"):
         assert banned not in prod_text
         assert banned not in dev_text
-    assert "http://127.0.0.1:8000" in csp["connect-src"]
+    assert "http://127.0.0.1:8000" not in csp["connect-src"]
     assert "ipc:" in csp["connect-src"]
     assert "http://ipc.localhost" in csp["connect-src"]
     assert "5173" not in prod_text and "ws://" not in prod_text
@@ -593,6 +594,10 @@ def test_csp_and_fonts():
     assert csp["frame-ancestors"] == ["'none'"]
     assert "data:" in csp["img-src"]
     assert "blob:" in csp["img-src"]
+    capabilities = json.loads((ROOT / "src-tauri" / "capabilities" / "default.json").read_text())
+    granted = json.dumps(capabilities)
+    assert "shell:allow-spawn" not in granted
+    assert "shell:allow-execute" not in granted
     index = (ROOT / "frontend" / "index.html").read_text()
     assert "fonts.googleapis.com" not in index
     assert "fonts.gstatic.com" not in index
@@ -774,13 +779,15 @@ def test_revocation_identity_and_base_url():
     assert planted.resolve("profile-old", "anthropic") is None
     assert planted.status("profile-old", "openai").unbound_profile_credential is True
     assert "DOCXEDI" not in planted.status("profile-old", "openai").hint
-    rebound = planted.rebind_unscoped("profile-old", "openai")
+    rebound, copied = planted.rebind_unscoped("profile-old", "openai")
+    assert copied is True
     assert rebound.source == "profile"
     assert planted.resolve("profile-old", "openai").secret == SENTINEL
     assert planted.resolve("profile-old", "anthropic") is None
     assert "profile:profile-old" not in planted.durable.data
     assert planted.durable.data["profile:profile-old:openai"] == SENTINEL
-    again = planted.rebind_unscoped("profile-old", "anthropic")
+    again, again_copied = planted.rebind_unscoped("profile-old", "anthropic")
+    assert again_copied is False
     assert again.source != "profile" or planted.resolve("profile-old", "anthropic") is None
     assert "profile:profile-old:anthropic" not in planted.durable.data
 
@@ -1025,7 +1032,8 @@ def test_unscoped_recovery_and_legacy_startup(tmp: Path):
         assert "gggg" not in rejected.text
     assert loopback.status_code == 401
 
-    rebound = store.rebind_unscoped(pid, "openai")
+    rebound, copied = store.rebind_unscoped(pid, "openai")
+    assert copied is True
     assert rebound.source == "profile"
     assert rebound.unbound_profile_credential is False
     assert store.resolve(pid, "openai").secret == SENTINEL
@@ -1036,10 +1044,12 @@ def test_unscoped_recovery_and_legacy_startup(tmp: Path):
     set_at = [index for index, event in enumerate(recorded.events) if event == ("set", f"profile:{pid}:openai")]
     delete_at = [index for index, event in enumerate(recorded.events) if event == ("delete", f"profile:{pid}")]
     assert set_at and delete_at and set_at[0] < delete_at[0]
-    repeat = store.rebind_unscoped(pid, "openai")
+    repeat, repeat_copied = store.rebind_unscoped(pid, "openai")
+    assert repeat_copied is False
     assert repeat.source == "profile"
     assert recorded.data[f"profile:{pid}:openai"] == SENTINEL
-    again = store.rebind_unscoped(pid, "anthropic")
+    again, again_copied = store.rebind_unscoped(pid, "anthropic")
+    assert again_copied is False
     assert store.resolve(pid, "anthropic") is None
     assert f"profile:{pid}:anthropic" not in recorded.data
 

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Minus, Plus, Target } from 'lucide-react'
 import { useEditorContext } from '../context/EditorContext'
-import { apiUrl } from '../utils/api'
+import { apiFetch, retryBackend } from '../utils/api'
 import { usePersistence } from '../persistence/PersistenceContext'
 import { formatPersistenceStatus } from '../persistence/status'
 
@@ -18,7 +18,7 @@ export function StatusBar() {
 
   useEffect(() => {
     const checkBackend = () => {
-      fetch(apiUrl('/api/health'))
+      apiFetch('/api/health')
         .then(res => setBackendOnline(res.ok))
         .catch(() => setBackendOnline(false))
     }
@@ -108,10 +108,20 @@ export function StatusBar() {
       >
         {formatPersistenceStatus(persistenceStatus)}
       </span>
-      <span className={`flex items-center gap-1.5 normal-case tracking-normal ${backendOnline ? 'text-[var(--color-success)]' : 'text-[var(--color-danger)]'}`} title={backendOnline ? 'Backend connected' : 'Backend offline'}>
+      <button
+        type="button"
+        className={`flex items-center gap-1.5 normal-case tracking-normal ${backendOnline ? 'text-[var(--color-success)]' : 'text-[var(--color-danger)]'}`}
+        title={backendOnline ? 'Backend connected' : 'Backend offline. Retry starts a new backend.'}
+        onClick={() => {
+          if (backendOnline) return
+          void retryBackend().finally(() => {
+            apiFetch('/api/health').then(res => setBackendOnline(res.ok)).catch(() => setBackendOnline(false))
+          })
+        }}
+      >
         <span className={`w-1.5 h-1.5 ${backendOnline ? 'bg-[var(--color-success)]' : 'bg-[var(--color-danger)]'}`} />
         {backendOnline ? 'AI Ready' : 'Offline'}
-      </span>
+      </button>
       <div className="flex items-center gap-0.5">
         <button
           onClick={() => setZoom(z => Math.max(50, z - 10))}

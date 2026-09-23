@@ -3,7 +3,7 @@ import { createDocxEditorExtensions } from '../extensions/createDocxEditorExtens
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useEditorContext } from '../context/EditorContext'
 import { saveHeaderFooter, loadHeaderFooter } from '../utils/storage'
-import { apiUrl } from '../utils/api'
+import { apiFetch } from '../utils/api'
 import { showToast } from './Toast'
 import { usePersistence } from '../persistence/PersistenceContext'
 import { DEFAULT_DOCUMENT_HTML, resolveInitialHtml } from '../persistence/hydrate'
@@ -95,7 +95,7 @@ function EditorInner({ initialHtml }: { initialHtml: string }) {
     const formData = new FormData()
     formData.append('file', file)
     try {
-      const res = await fetch(apiUrl('/api/import'), { method: 'POST', body: formData })
+      const res = await apiFetch('/api/import', { method: 'POST', body: formData })
       const data = await res.json()
       if (data.html && editor) {
         const result = await replaceCurrentDocument(data.html, 'Before import')

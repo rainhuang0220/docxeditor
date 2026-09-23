@@ -1,11 +1,18 @@
 import os
 import re
+import sys
 import warnings
 from contextlib import asynccontextmanager
 from urllib.parse import quote
 
+# Captured before dotenv so a .env file cannot turn authentication off.
+_DEV_INSECURE_REQUESTED = os.environ.get("DOCXEDITOR_DEV_INSECURE") == "1"
+
 from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
+
+from .session_auth import SessionAuth, configure as configure_session
+configure_session(token=None, dev_insecure=_DEV_INSECURE_REQUESTED and not getattr(sys, "frozen", False))
 
 from fastapi import FastAPI, Query, UploadFile, File
 from fastapi.exceptions import RequestValidationError
@@ -179,7 +186,13 @@ async def _lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="AI Document IDE Backend", lifespan=_lifespan)
+app = FastAPI(
+    title="AI Document IDE Backend",
+    lifespan=_lifespan,
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -188,6 +201,38 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["Content-Type"],
 )
+app.add_middleware(SessionAuth)
+
+
+def install_test_hooks() -> None:
+    """Slow stream used only by the desktop process tests. Never in a frozen build."""
+    if os.environ.get("DOCXEDITOR_TEST_HOOKS") != "1" or getattr(sys, "frozen", False):
+        return
+    if any(getattr(route, "path", "") == "/api/test/drip" for route in app.routes):
+        return
+
+    from fastapi import Request
+    from fastapi.responses import StreamingResponse
+
+    @app.get("/api/test/drip")
+    async def drip(request: Request):
+        import asyncio
+        from pathlib import Path
+
+        marker = os.environ.get("DOCXEDITOR_DRIP_MARKER")
+
+        async def generate():
+            try:
+                for index in range(40):
+                    if await request.is_disconnected():
+                        break
+                    yield f"data: {index}\n\n"
+                    await asyncio.sleep(0.15)
+            finally:
+                if marker:
+                    Path(marker).write_text("closed", encoding="utf-8")
+
+        return StreamingResponse(generate(), media_type="text/event-stream")
 
 
 @app.exception_handler(RequestValidationError)
@@ -382,7 +427,8 @@ async def rebind_credential(profile_id: str, body: RebindCredentialRequest):
     if error is not None:
         return error
     try:
-        status = _store().rebind_unscoped(checked, body.provider)
+        status, copied = _store().rebind_unscoped(checked, body.provider)
+        same = _store().profiles_share_secret(checked, body.provider)
     except CredentialStoreError:
         return JSONResponse(
             status_code=503,
@@ -393,7 +439,10 @@ async def rebind_credential(profile_id: str, body: RebindCredentialRequest):
                 }
             },
         )
-    return status.public_dict()
+    payload = status.public_dict()
+    payload["rebound"] = copied
+    payload["other_profile_same_secret"] = same
+    return payload
 
 
 @app.post("/api/credentials/{profile_id}/test")

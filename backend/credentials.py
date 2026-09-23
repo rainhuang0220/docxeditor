@@ -377,7 +377,7 @@ class CredentialStore:
             return memory_secret, self.memory
         return None, None
 
-    def rebind_unscoped(self, profile_id: str, provider: str) -> CredentialStatus:
+    def rebind_unscoped(self, profile_id: str, provider: str) -> tuple[CredentialStatus, bool]:
         """Copy a branch-era profile:<id> secret onto profile:<id>:<provider>.
 
         The unscoped entry is deleted only after the bound copy and a
@@ -394,7 +394,7 @@ class CredentialStore:
         old_secret, store = self._owned_secret(old)
         marker_value, _marker_store = self._owned_secret(marker)
         if bound_secret or other_secret or (marker_value and marker_value != provider) or not old_secret or store is None:
-            return self.status(profile_id, provider)
+            return self.status(profile_id, provider), False
         try:
             store.set(bound, old_secret)
             got = self._strict_get(store, bound)
@@ -414,7 +414,17 @@ class CredentialStore:
             raise CredentialStoreError("could not bind the existing credential") from exc
         if store is self.durable:
             self.memory.delete(old)
-        return self.status(profile_id, provider)
+        return self.status(profile_id, provider), True
+
+    def profiles_share_secret(self, profile_id: str, provider: str) -> bool:
+        """True only when both provider accounts hold the same secret. No hash is returned."""
+        provider = check_provider(provider)
+        other = "anthropic" if provider == "openai" else "openai"
+        left, _left_store = self._owned_secret(profile_account(profile_id, provider))
+        right, _right_store = self._owned_secret(profile_account(profile_id, other))
+        if not left or not right:
+            return False
+        return secrets_match(left, right)
 
     def has_unscoped(self, profile_id: str) -> bool:
         try:

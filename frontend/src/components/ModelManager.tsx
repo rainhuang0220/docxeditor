@@ -222,7 +222,12 @@ export function ModelManager() {
   const handleDiscardEarlier = async (model: ModelProfile) => {
     const agreed = window.confirm('Discard the earlier unconfirmed credential? The saved key for this provider is not removed.')
     if (!agreed) return
-    const discarded = await discardEarlierCredential(model.id)
+    let discarded = false
+    try {
+      discarded = await discardEarlierCredential(model.id)
+    } catch {
+      discarded = false
+    }
     if (!discarded) {
       setRecoveryMessage('Could not discard the earlier credential. It was kept.')
       return

@@ -95,6 +95,8 @@ test('confirmed recovery posts only the chosen provider and requires a profile r
         persistent: true,
         source: 'profile',
         unbound_profile_credential: false,
+        rebound: true,
+        other_profile_same_secret: false,
       })), { status: 200 })
     }
     if (url.includes('provider=anthropic') && calls.filter(call => call.method === 'POST').length === 0) {
@@ -214,7 +216,7 @@ test('a rebind response that echoes a secret is rejected', async () => {
   }
 })
 
-test('a matching hint on the other provider is not a successful bind', async () => {
+test('the backend same-secret flag rejects a bind without comparing hints', async () => {
   const original = globalThis.fetch
   const calls: string[] = []
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -229,6 +231,8 @@ test('a matching hint on the other provider is not a successful bind', async () 
         mode: 'keyring',
         persistent: true,
         unbound_profile_credential: false,
+        rebound: true,
+        other_profile_same_secret: true,
       })), { status: 200 })
     }
     if (url.includes('provider=anthropic') && calls.filter(call => call === 'POST').length === 0) {
