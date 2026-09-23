@@ -136,6 +136,9 @@ test('transfer helper scrubs only when PUT and GET both report keyring', async (
     const body = typeof init?.body === 'string' ? init.body : ''
     assert.equal(url.includes(SENTINEL), false)
     if ((init?.method || 'GET') === 'PUT') {
+      const sent = JSON.parse(body) as { provider?: string; api_key?: string }
+      assert.equal(sent.provider, 'openai')
+      assert.equal(sent.api_key, SENTINEL)
       return new Response(JSON.stringify({
         has_key: true,
         hint: '••••9f2c',

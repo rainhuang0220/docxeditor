@@ -13,17 +13,26 @@ _ISOLATED_HOME = tempfile.mkdtemp(prefix="docxeditor-cred-")
 os.environ["DOCXEDITOR_CONFIG_PATH"] = str(Path(_ISOLATED_HOME) / "config.json")
 
 from fastapi.testclient import TestClient
+from keyring.errors import KeyringLocked, PasswordDeleteError
 
 from . import ai_service as ai
 from .credentials import (
+    CredentialStillPresent,
     CredentialStore,
     CredentialStoreError,
+    CredentialUnverifiable,
     MappingEnv,
     MemorySecretStore,
+    _trusted_keyring_backend,
     detect_keyring,
     mask_secret,
     open_credential_store,
 )
+from .provider_runtime import InvalidBaseUrl, ResolvedProvider, validate_base_url
+
+
+def ai_spec(provider: str, api_key: str, model: str, base_url: str) -> ResolvedProvider:
+    return ResolvedProvider(provider, api_key, model, base_url, "profile")
 from .legacy_config import migrate_legacy_config, restrict_config_permissions
 from .main import ALLOWED_ORIGINS, app
 from .provider_runtime import ResolvedProvider, redact
@@ -59,15 +68,16 @@ def test_mask_and_profile_isolation():
     assert "DOCXEDI" not in mask_secret(SENTINEL)
     durable = MemorySecretStore()
     store = _store(durable=durable, keyring=True)
-    status = store.put("profile-a", SENTINEL)
+    status = store.put("profile-a", "openai", SENTINEL)
     assert status.mode == "keyring" and status.persistent is True
     assert status.hint == "••••9f2c"
     assert SENTINEL not in json.dumps(status.public_dict())
-    store.put("profile-b", "other-key-zzzz")
+    store.put("profile-b", "openai", "other-key-zzzz")
     assert store.resolve("profile-a", "openai").secret == SENTINEL
+    assert store.resolve("profile-a", "anthropic") is None
     assert store.resolve("profile-b", "openai").secret == "other-key-zzzz"
     assert store.resolve("profile-a", "openai").secret != store.resolve("profile-b", "openai").secret
-    gone = store.delete_profile("profile-a")
+    gone = store.delete_profile("profile-a", "openai")
     assert gone.has_key is False
     assert store.resolve("profile-a", "openai") is None
     assert store.resolve("profile-b", "openai").secret == "other-key-zzzz"
@@ -77,7 +87,7 @@ def test_mask_and_profile_isolation():
 def test_memory_fallback_and_precedence():
     env = {"OPENAI_API_KEY": "env-key-openai-zzzz", "ANTHROPIC_API_KEY": "env-key-anthropic-yyyy"}
     memory_only = _store(env=env, keyring=False)
-    saved = memory_only.put("profile-a", SENTINEL)
+    saved = memory_only.put("profile-a", "openai", SENTINEL)
     assert saved.mode == "memory" and saved.persistent is False
     assert memory_only.status("profile-a", "openai").mode == "memory"
     assert memory_only.resolve("profile-a", "openai").secret == SENTINEL
@@ -86,7 +96,10 @@ def test_memory_fallback_and_precedence():
     assert memory_only.status("missing", "anthropic").mode == "environment"
     assert memory_only.resolve("missing", "anthropic").secret == "env-key-anthropic-yyyy"
     before = dict(env)
-    memory_only.delete_profile("profile-a")
+    removed = memory_only.delete_profile("profile-a", "openai")
+    assert removed.mode == "environment" and removed.source == "environment"
+    assert removed.hint == "••••zzzz"
+    assert "env-key-openai-zzzz" not in json.dumps(removed.public_dict())
     assert env == before
     assert memory_only.resolve("profile-a", "openai").secret == "env-key-openai-zzzz"
 
@@ -94,7 +107,7 @@ def test_memory_fallback_and_precedence():
     both = _store(env=env, durable=durable, keyring=True)
     both.remember_legacy("openai", "legacy-openai-key-1234")
     assert both.resolve("nobody", "openai").secret == "legacy-openai-key-1234"
-    both.put("somebody", "profile-key-abcd")
+    both.put("somebody", "openai", "profile-key-abcd")
     assert both.resolve("somebody", "openai").secret == "profile-key-abcd"
     assert both.resolve("somebody", "openai").source == "profile"
     assert both.resolve("ghost", "nope") is None
@@ -121,13 +134,13 @@ def test_keyring_write_failure_does_not_claim_success():
             self.data.pop(account, None)
 
     store = _store(durable=Flaky(), keyring=True)
-    status = store.put("profile-a", SENTINEL)
+    status = store.put("profile-a", "openai", SENTINEL)
     assert status.mode == "memory" and status.persistent is False
     assert "api_key" not in json.dumps(status.public_dict())
 
     class KeepsOld:
         def __init__(self):
-            self.data = {"profile:profile-a": "old-key-value"}
+            self.data = {"profile:profile-a:openai": "old-key-value"}
 
         def get(self, account):
             return self.data.get(account)
@@ -140,7 +153,7 @@ def test_keyring_write_failure_does_not_claim_success():
 
     stuck = _store(durable=KeepsOld(), keyring=True)
     try:
-        stuck.put("profile-a", SENTINEL)
+        stuck.put("profile-a", "openai", SENTINEL)
         raise AssertionError("must not report success over a different durable key")
     except CredentialStoreError:
         pass
@@ -434,7 +447,7 @@ def test_http_credentials_and_cors():
         assert "DOCXEDI" not in chat_rejected.text
         assert chat_rejected.json()["error"]["code"] == "secret_field_rejected"
 
-        created = client.put("/api/credentials/profile-a", json={"api_key": SENTINEL})
+        created = client.put("/api/credentials/profile-a", json={"api_key": SENTINEL, "provider": "openai"})
         assert created.status_code == 200
         body = created.json()
         assert body["has_key"] is True and body["mode"] == "keyring" and body["hint"] == "••••9f2c"
@@ -448,6 +461,9 @@ def test_http_credentials_and_cors():
         other = client.get("/api/credentials/profile-b", params={"provider": "openai"})
         assert other.json()["mode"] == "environment"
         assert "env-only-key-zzzz" not in other.text
+        other_provider = client.get("/api/credentials/profile-a", params={"provider": "anthropic"})
+        assert other_provider.json()["has_key"] is False
+        assert SENTINEL not in other_provider.text
 
         tested_res = client.post("/api/credentials/profile-a/test", json={
             "provider": "openai",
@@ -480,11 +496,16 @@ def test_http_credentials_and_cors():
         assert "ANTHROPIC_API_KEY" in missing.text
         assert "api_key" not in missing.text
 
-        removed = client.delete("/api/credentials/profile-a")
-        assert removed.status_code == 200 and removed.json()["has_key"] is False
+        removed = client.delete("/api/credentials/profile-a", params={"provider": "openai"})
+        assert removed.status_code == 200
+        assert removed.json()["mode"] == "environment"
+        assert removed.json()["source"] == "environment"
+        assert removed.json()["has_key"] is True
+        assert "env-only-key-zzzz" not in removed.text
+        assert SENTINEL not in removed.text
         assert os.environ.get("OPENAI_API_KEY") == env_before.get("OPENAI_API_KEY")
 
-        short = client.put("/api/credentials/profile-short", json={"api_key": "abcd"})
+        short = client.put("/api/credentials/profile-short", json={"api_key": "abcd", "provider": "openai"})
         assert short.json()["hint"] == "••••"
         assert "abcd" not in short.text
 
@@ -584,12 +605,313 @@ def test_no_plaintext_config_after_successful_migration(tmp: Path):
             "provider": "openai",
             "model": "gpt-4o",
         })
-        client.put("/api/credentials/profile-z", json={"api_key": "another-key-zzzz"})
+        client.put("/api/credentials/profile-z", json={"api_key": "another-key-zzzz", "provider": "openai"})
     text = path.read_text()
     assert "api_key" not in text
     assert SENTINEL not in text
     assert "another-key-zzzz" not in text
     print("PASS: new requests do not rewrite api_key")
+
+
+def test_revocation_identity_and_base_url():
+    secret = "still-present-key-zzzz"
+
+    class Remains:
+        def __init__(self):
+            self.data = {"profile:profile-a:openai": secret, "legacy-provider:openai": "legacy-key-zzzz"}
+            self.memory_note = None
+
+        def get(self, account):
+            return self.data.get(account)
+
+        def set(self, account, value):
+            self.data[account] = value
+
+        def delete(self, account):
+            raise PasswordDeleteError("Can't delete password in keychain")
+
+    durable = Remains()
+    memory = MemorySecretStore({"profile:profile-a:openai": "memory-copy-zzzz"})
+    store = CredentialStore(durable, memory, MappingEnv({"OPENAI_API_KEY": "env-key-openai-zzzz"}), True)
+    try:
+        store.delete_profile("profile-a", "openai")
+        raise AssertionError("delete must fail while the key remains")
+    except CredentialStillPresent:
+        pass
+    assert durable.data["profile:profile-a:openai"] == secret
+    assert memory.data["profile:profile-a:openai"] == "memory-copy-zzzz"
+    assert durable.data["legacy-provider:openai"] == "legacy-key-zzzz"
+    assert store.resolve("profile-a", "openai").secret == secret
+
+    class Missing:
+        def __init__(self):
+            self.data = {}
+            self.deletes = 0
+
+        def get(self, account):
+            return self.data.get(account)
+
+        def set(self, account, value):
+            self.data[account] = value
+
+        def delete(self, account):
+            self.deletes += 1
+            raise PasswordDeleteError("No such password!")
+
+    missing = CredentialStore(Missing(), MemorySecretStore(), MappingEnv({}), True)
+    gone = missing.delete_profile("profile-a", "openai")
+    assert gone.has_key is False and gone.source == "missing"
+    assert missing.durable.deletes >= 1
+
+    class Lies:
+        def __init__(self):
+            self.data = {"profile:profile-a:openai": secret}
+
+        def get(self, account):
+            return self.data.get(account)
+
+        def set(self, account, value):
+            self.data[account] = value
+
+        def delete(self, account):
+            return None
+
+    lied = CredentialStore(Lies(), MemorySecretStore({"profile:profile-a:openai": secret}), MappingEnv({}), True)
+    try:
+        lied.delete_profile("profile-a", "openai")
+        raise AssertionError("quiet delete must still be checked")
+    except CredentialStillPresent:
+        pass
+    assert lied.memory.data["profile:profile-a:openai"] == secret
+
+    class LockedAfter:
+        def __init__(self):
+            self.data = {"profile:profile-a:openai": secret}
+            self.deleted = False
+
+        def get(self, account):
+            if self.deleted:
+                raise KeyringLocked("locked")
+            return self.data.get(account)
+
+        def set(self, account, value):
+            self.data[account] = value
+
+        def delete(self, account):
+            self.deleted = True
+
+    locked = CredentialStore(LockedAfter(), MemorySecretStore({"profile:profile-a:openai": secret}), MappingEnv({}), True)
+    try:
+        locked.delete_profile("profile-a", "openai")
+        raise AssertionError("unreadable keyring must not count as revoked")
+    except CredentialUnverifiable:
+        pass
+    assert locked.memory.data["profile:profile-a:openai"] == secret
+
+    class Honest:
+        def __init__(self):
+            self.data = {
+                "profile:profile-a:openai": secret,
+                "profile:profile-a:anthropic": "anth-key-zzzz",
+                "legacy-provider:openai": "legacy-key-zzzz",
+            }
+
+        def get(self, account):
+            return self.data.get(account)
+
+        def set(self, account, value):
+            self.data[account] = value
+
+        def delete(self, account):
+            self.data.pop(account, None)
+
+    honest_memory = MemorySecretStore()
+    honest = CredentialStore(
+        Honest(),
+        honest_memory,
+        MappingEnv({"OPENAI_API_KEY": "env-key-openai-zzzz", "ANTHROPIC_API_KEY": "env-key-anthropic-yyyy"}),
+        True,
+    )
+    status = honest.delete_profile("profile-a", "openai")
+    assert "profile:profile-a:openai" not in honest.durable.data
+    assert "profile:profile-a:anthropic" not in honest.durable.data
+    assert honest.durable.data["legacy-provider:openai"] == "legacy-key-zzzz"
+    assert honest.resolve("profile-a", "openai").secret == "legacy-key-zzzz"
+    assert honest.resolve("profile-a", "openai").source == "legacy"
+    assert status.source == "legacy" and status.persistent is True
+    assert honest.resolve("profile-a", "anthropic").secret == "env-key-anthropic-yyyy"
+    assert honest.resolve("profile-a", "anthropic").source == "environment"
+    env_only = CredentialStore(
+        Honest(),
+        MemorySecretStore(),
+        MappingEnv({"OPENAI_API_KEY": "env-key-openai-zzzz"}),
+        True,
+    )
+    env_only.durable.data.pop("legacy-provider:openai", None)
+    env_only.durable.data["profile:profile-b:openai"] = secret
+    env_status = env_only.delete_profile("profile-b", "openai")
+    assert env_status.source == "environment"
+    assert env_status.hint == "••••zzzz"
+    assert "env-key-openai-zzzz" not in json.dumps(env_status.public_dict())
+
+    split = _store(durable=MemorySecretStore(), keyring=True)
+    split.put("profile-a", "openai", SENTINEL)
+    split.put("profile-a", "anthropic", "anth-only-key-zzzz")
+    assert split.resolve("profile-a", "openai").secret == SENTINEL
+    assert split.resolve("profile-a", "anthropic").secret == "anth-only-key-zzzz"
+    assert split.resolve("profile-a", "anthropic").secret != SENTINEL
+
+    planted = _store(durable=MemorySecretStore({"profile:profile-old": SENTINEL}), keyring=True)
+    assert planted.resolve("profile-old", "openai") is None
+    assert planted.resolve("profile-old", "anthropic") is None
+    assert planted.status("profile-old", "openai").unbound_profile_credential is True
+    assert "DOCXEDI" not in planted.status("profile-old", "openai").hint
+    rebound = planted.rebind_unscoped("profile-old", "openai")
+    assert rebound.source == "profile"
+    assert planted.resolve("profile-old", "openai").secret == SENTINEL
+    assert planted.resolve("profile-old", "anthropic") is None
+    assert "profile:profile-old" not in planted.durable.data
+    assert planted.durable.data["profile:profile-old:openai"] == SENTINEL
+    again = planted.rebind_unscoped("profile-old", "anthropic")
+    assert again.source != "profile" or planted.resolve("profile-old", "anthropic") is None
+    assert "profile:profile-old:anthropic" not in planted.durable.data
+
+    class NoCopy:
+        def __init__(self):
+            self.data = {"profile:profile-old": SENTINEL}
+
+        def get(self, account):
+            return self.data.get(account)
+
+        def set(self, account, value):
+            if account.endswith(":openai"):
+                raise OSError("cannot bind")
+            self.data[account] = value
+
+        def delete(self, account):
+            self.data.pop(account, None)
+
+    stuck = CredentialStore(NoCopy(), MemorySecretStore(), MappingEnv({}), True)
+    try:
+        stuck.rebind_unscoped("profile-old", "openai")
+        raise AssertionError("failed rebind must not look successful")
+    except CredentialStoreError:
+        pass
+    assert stuck.durable.data["profile:profile-old"] == SENTINEL
+
+    class FileBackend:
+        priority = 5
+        __module__ = "keyring.backends.file"
+
+    class Plaintext:
+        priority = 0.5
+        __module__ = "keyrings.alt.file"
+
+    class NullBackend:
+        priority = 0
+        __module__ = "keyring.backends.null"
+
+    class Chainer:
+        priority = 10
+        __module__ = "keyring.backends.chainer"
+        backends = [FileBackend()]
+
+    class Mac:
+        priority = 5
+        __module__ = "keyring.backends.macOS"
+
+    class MixedChainer:
+        priority = 10
+        __module__ = "keyring.backends.chainer"
+        backends = [Mac(), Plaintext()]
+
+    class OsChainer:
+        priority = 10
+        __module__ = "keyring.backends.chainer"
+        backends = [Mac(), NullBackend()]
+
+    assert _trusted_keyring_backend(FileBackend()) is False
+    assert _trusted_keyring_backend(Plaintext()) is False
+    assert _trusted_keyring_backend(Chainer()) is False
+    assert _trusted_keyring_backend(MixedChainer()) is False
+    assert _trusted_keyring_backend(OsChainer()) is True
+    assert _trusted_keyring_backend(Mac()) is True
+    assert detect_keyring(type("Mod", (), {
+        "get_keyring": staticmethod(lambda: FileBackend()),
+        "get_password": staticmethod(lambda *_args: None),
+    })) == (False, None)
+
+    assert validate_base_url("https://proxy.example/v1") == "https://proxy.example/v1"
+    assert validate_base_url("http://127.0.0.2:11434/v1").startswith("http://127.0.0.2")
+    assert validate_base_url("http://localhost:11434/v1").startswith("http://localhost")
+    assert validate_base_url("") == ""
+    for bad in (
+        "http://example.com/v1",
+        "https://user:pass@proxy.example/v1",
+        "file:///tmp/x",
+        "javascript:alert(1)",
+        "http://169.254.169.254/",
+    ):
+        try:
+            validate_base_url(bad)
+            raise AssertionError(bad)
+        except InvalidBaseUrl:
+            pass
+
+    with TestClient(app) as client:
+        _use(_store(durable=MemorySecretStore({"profile:profile-a:openai": SENTINEL}), keyring=True))
+        called = []
+
+        async def tester(spec):
+            called.append(spec.base_url)
+
+        app.state.credential_tester = tester
+        rejected = client.post("/api/credentials/profile-a/test", json={
+            "provider": "openai",
+            "base_url": "https://user:pass@proxy.example/v1",
+        })
+        assert rejected.status_code == 422
+        assert SENTINEL not in rejected.text
+        assert "pass" not in rejected.text
+        assert called == []
+        isolated = client.post("/api/chat", json={
+            "message": "hello",
+            "profile_id": "profile-a",
+            "provider": "anthropic",
+            "model": "claude",
+        })
+        assert isolated.status_code == 401
+        assert SENTINEL not in isolated.text
+        put_missing = client.put("/api/credentials/profile-a", json={"api_key": SENTINEL})
+        assert put_missing.status_code == 422
+        assert SENTINEL not in put_missing.text
+
+    crossed = []
+
+    async def isolated_providers():
+        openai_key = split.resolve("profile-a", "openai").secret
+        anthropic_key = split.resolve("profile-a", "anthropic").secret
+        await asyncio.gather(
+            ai.process_chat(
+                "hello", "<p>x</p>", [],
+                ai_spec("openai", openai_key, "model-o", "https://openai.example/v1"),
+                client_factory=_openai_factory(crossed),
+            ),
+            ai.process_chat(
+                "hello", "<p>x</p>", [],
+                ai_spec("anthropic", anthropic_key, "model-a", "https://anthropic.example"),
+                client_factory=_anthropic_factory(crossed),
+            ),
+        )
+
+    asyncio.run(isolated_providers())
+    by_key = {row["api_key"]: row for row in crossed if "api_key" in row}
+    assert by_key[SENTINEL]["provider"] == "openai"
+    assert by_key[SENTINEL]["model"] == "model-o"
+    assert by_key["anth-only-key-zzzz"]["provider"] == "anthropic"
+    assert by_key["anth-only-key-zzzz"]["model"] == "model-a"
+
+    print("PASS: revocation, provider identity, base URL")
 
 
 def main():
@@ -606,6 +928,7 @@ def main():
     asyncio.run(test_explicit_clients_and_concurrency())
     test_http_credentials_and_cors()
     test_csp_and_fonts()
+    test_revocation_identity_and_base_url()
     print("ALL CREDENTIAL TESTS PASSED")
 
 

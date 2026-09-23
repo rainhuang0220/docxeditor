@@ -24,6 +24,7 @@ from .export_service import export_docx, export_docx_to_bytes
 from .import_service import import_docx
 from .legacy_config import default_config_path, migrate_legacy_config
 from .provider_runtime import (
+    InvalidBaseUrl,
     ResolvedProvider,
     concrete_base_url,
     concrete_model,
@@ -70,6 +71,12 @@ class ExportRequest(BaseModel):
 class PutCredentialRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     api_key: str = Field(min_length=1, max_length=4096)
+    provider: Literal["openai", "anthropic"]
+
+
+class RebindCredentialRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    provider: Literal["openai", "anthropic"]
 
 
 class TestCredentialRequest(BaseModel):
@@ -101,6 +108,18 @@ def _resolve_provider(profile_id: str, provider: str, model: str, base_url: str)
         model=concrete_model(provider, model, _env_get),
         base_url=concrete_base_url(provider, base_url, _env_get),
         source=resolved.source,
+    )
+
+
+def _rejected_base_url() -> JSONResponse:
+    return JSONResponse(
+        status_code=422,
+        content={
+            "error": {
+                "code": "invalid_base_url",
+                "message": "Base URL was rejected. Use https, or http only for localhost.",
+            }
+        },
     )
 
 
@@ -172,7 +191,10 @@ async def reject_invalid_request(_request, exc: RequestValidationError):
 
 @app.post("/api/chat")
 async def chat(req: ChatRequest):
-    spec = _resolve_provider(req.profile_id, req.provider, req.model, req.base_url)
+    try:
+        spec = _resolve_provider(req.profile_id, req.provider, req.model, req.base_url)
+    except InvalidBaseUrl:
+        return _rejected_base_url()
     if spec is None:
         return _missing_credential(req.profile_id, req.provider)
     history = [turn.model_dump() for turn in req.history]
@@ -188,7 +210,10 @@ async def chat(req: ChatRequest):
 
 @app.post("/api/chat/stream")
 async def chat_stream(req: ChatRequest):
-    spec = _resolve_provider(req.profile_id, req.provider, req.model, req.base_url)
+    try:
+        spec = _resolve_provider(req.profile_id, req.provider, req.model, req.base_url)
+    except InvalidBaseUrl:
+        return _rejected_base_url()
     if spec is None:
         return _missing_credential(req.profile_id, req.provider)
     history = [turn.model_dump() for turn in req.history]
@@ -248,7 +273,7 @@ async def put_credential(profile_id: str, body: PutCredentialRequest):
     if error is not None:
         return error
     try:
-        status = _store().put(checked, body.api_key)
+        status = _store().put(checked, body.provider, body.api_key)
     except CredentialStoreError:
         return JSONResponse(
             status_code=503,
@@ -271,12 +296,15 @@ async def get_credential(profile_id: str, provider: Literal["openai", "anthropic
 
 
 @app.delete("/api/credentials/{profile_id}")
-async def delete_credential(profile_id: str):
+async def delete_credential(
+    profile_id: str,
+    provider: Literal["openai", "anthropic"] = Query(...),
+):
     checked, error = _profile_or_400(profile_id)
     if error is not None:
         return error
     try:
-        status = _store().delete_profile(checked)
+        status = _store().delete_profile(checked, provider)
     except CredentialStoreError:
         return JSONResponse(
             status_code=503,
@@ -300,12 +328,35 @@ async def _default_tester(spec: ResolvedProvider) -> None:
     )
 
 
+@app.post("/api/credentials/{profile_id}/rebind")
+async def rebind_credential(profile_id: str, body: RebindCredentialRequest):
+    checked, error = _profile_or_400(profile_id)
+    if error is not None:
+        return error
+    try:
+        status = _store().rebind_unscoped(checked, body.provider)
+    except CredentialStoreError:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": {
+                    "code": "credential_store_failed",
+                    "message": "The existing credential could not be bound to this provider.",
+                }
+            },
+        )
+    return status.public_dict()
+
+
 @app.post("/api/credentials/{profile_id}/test")
 async def test_credential(profile_id: str, body: TestCredentialRequest):
     checked, error = _profile_or_400(profile_id)
     if error is not None:
         return error
-    spec = _resolve_provider(checked, body.provider, body.model, body.base_url)
+    try:
+        spec = _resolve_provider(checked, body.provider, body.model, body.base_url)
+    except InvalidBaseUrl:
+        return _rejected_base_url()
     if spec is None:
         return {"ok": False, "error": "No API key is configured for this profile."}
     tester = app.state.credential_tester or _default_tester

@@ -11,6 +11,7 @@ import {
   type CredentialStatus,
 } from '../utils/credentials'
 import { draftFromStatus, reduceCredentialDraft } from '../utils/credentialEditor'
+import { commitModelDeletion, planProviderCredentialWrite, profileHasRetainedSecret } from '../utils/modelCredentialDeletion'
 
 const DEFAULT_MODELS: Record<ModelProvider, string> = {
   openai: 'gpt-4o',
@@ -40,7 +41,7 @@ function emptyProfile(): EditableProfile {
 }
 
 export function ModelManager() {
-  const { models, activeModelId, setActiveModelId, upsertModel, deleteModel, credentialWarning } = useEditorContext()
+  const { models, activeModelId, setActiveModelId, upsertModel, deleteModel, releaseRetainedLegacy, credentialWarning, reviewPending } = useEditorContext()
   const [isOpen, setIsOpen] = useState(false)
   const [editing, setEditing] = useState<EditableProfile | null>(null)
   const [draftKey, setDraftKey] = useState('')
@@ -48,6 +49,8 @@ export function ModelManager() {
   const [credential, setCredential] = useState<CredentialStatus | null>(null)
   const [credentialDown, setCredentialDown] = useState(false)
   const [listStatus, setListStatus] = useState<Record<string, CredentialStatus | null>>({})
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [originalProvider, setOriginalProvider] = useState<ModelProvider>('openai')
 
   const refreshList = async (current = models) => {
     const entries = await Promise.all(current.map(async model => {
@@ -87,6 +90,7 @@ export function ModelManager() {
   const startNew = () => {
     const profile = emptyProfile()
     setEditing(profile)
+    setOriginalProvider(profile.provider)
     setStatus('idle')
     setCredential(null)
     setCredentialDown(false)
@@ -102,6 +106,7 @@ export function ModelManager() {
       baseUrl: model.baseUrl,
     }
     setEditing(profile)
+    setOriginalProvider(model.provider)
     setStatus('idle')
     setDraftKey(reduceCredentialDraft(draftKey, { type: 'open' }))
     void loadEditorStatus(profile)
@@ -125,13 +130,18 @@ export function ModelManager() {
       model: editing.model.trim(),
       baseUrl: editing.baseUrl.trim(),
     }
-    const typed = draftKey.trim()
+    const write = planProviderCredentialWrite({
+      previousProvider: originalProvider,
+      nextProvider: profile.provider,
+      typedKey: draftKey,
+    })
     try {
-      if (typed) {
-        const saved = await putCredential(profile.id, typed)
+      if (write.putApiKey) {
+        const saved = await putCredential(profile.id, profile.provider, write.putApiKey)
         setCredential(saved)
         setCredentialDown(false)
         setDraftKey(reduceCredentialDraft(draftKey, { type: 'save-success' }))
+        setOriginalProvider(profile.provider)
       }
       upsertModel(profile)
       setStatus('saved')
@@ -147,7 +157,7 @@ export function ModelManager() {
     setStatus('testing')
     try {
       if (draftKey.trim()) {
-        const saved = await putCredential(editing.id, draftKey.trim())
+        const saved = await putCredential(editing.id, editing.provider, draftKey.trim())
         setCredential(saved)
         setDraftKey(reduceCredentialDraft(draftKey, { type: 'save-success' }))
         upsertModel({
@@ -166,13 +176,28 @@ export function ModelManager() {
     }
   }
 
-  const handleDelete = async (id: string) => {
-    try {
-      await deleteCredential(id)
-    } catch {
-      /* The profile can still leave the list. The backend copy remains until a later delete. */
+  const handleDelete = async (id: string, discardRetainedLegacy: boolean) => {
+    const model = models.find(item => item.id === id)
+    if (!model) return
+    if (reviewPending && id === activeModelId) {
+      deleteModel(id)
+      return
     }
+    if (discardRetainedLegacy && !window.confirm('Discard the saved API key and delete this model?')) return
+    const result = await commitModelDeletion({
+      id,
+      provider: model.provider,
+      models,
+      discardRetainedLegacy,
+      deleteRemote: deleteCredential,
+    })
+    if (!result.removed) {
+      setDeleteError(result.message)
+      return
+    }
+    releaseRetainedLegacy(id)
     deleteModel(id)
+    setDeleteError(null)
   }
 
   const editorLine = credentialStatusLine(credential, credentialDown)
@@ -200,6 +225,9 @@ export function ModelManager() {
 
             {credentialWarning && (
               <p className="mb-4 text-[12.5px] text-[var(--color-danger)] leading-relaxed">{credentialWarning}</p>
+            )}
+            {deleteError && (
+              <p className="mb-4 text-[12.5px] text-[var(--color-danger)] leading-relaxed">{deleteError}</p>
             )}
 
             {!editing ? (
@@ -242,11 +270,19 @@ export function ModelManager() {
                         </button>
                         {models.length > 1 && (
                           <button
-                            onClick={() => void handleDelete(model.id)}
+                            onClick={() => void handleDelete(model.id, false)}
                             className="text-[var(--color-text-muted)] hover:text-[var(--color-danger)] p-1 transition-colors"
                             aria-label="Delete model"
                           >
                             <Trash2 size={13} />
+                          </button>
+                        )}
+                        {models.length > 1 && profileHasRetainedSecret(model.id) && (
+                          <button
+                            onClick={() => void handleDelete(model.id, true)}
+                            className="text-[11px] font-mono uppercase tracking-[0.06em] text-[var(--color-danger)] px-2 py-1"
+                          >
+                            Discard saved key
                           </button>
                         )}
                       </div>
@@ -278,7 +314,14 @@ export function ModelManager() {
                   <label className="field-label">Provider</label>
                   <select
                     value={editing.provider}
-                    onChange={e => setEditing({ ...editing, provider: e.target.value as ModelProvider })}
+                    onChange={e => {
+                      const provider = e.target.value as ModelProvider
+                      const next = { ...editing, provider }
+                      setEditing(next)
+                      setDraftKey(reduceCredentialDraft(draftKey, { type: 'open' }))
+                      setCredential(null)
+                      void loadEditorStatus(next)
+                    }}
                     className="field-select"
                   >
                     <option value="openai">OpenAI (GPT-4o)</option>

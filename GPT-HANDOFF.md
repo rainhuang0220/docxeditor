@@ -95,7 +95,9 @@ raw JSON
 
 - A persisted model profile is `id`, `label`, `provider`, `model`, `baseUrl`. `saveModelProfiles` writes those fields only.
 - The full key is accepted once by `PUT /api/credentials/{profile_id}`. `GET` returns presence, a last-four hint, and `keyring` / `memory` / `environment` / `unavailable`. It never returns the key.
-- Service `com.docxeditor.app`. Profile account `profile:<id>`. Legacy config keys use `legacy-provider:openai` or `legacy-provider:anthropic`.
+- Service `com.docxeditor.app`. Profile account `profile:<id>:<provider>`. An unscoped `profile:<id>` entry from this branch is copied only by an explicit rebind for that profile's known provider, and only after the new copy is read back. Legacy config keys use `legacy-provider:openai` or `legacy-provider:anthropic`.
+- Deleting a profile removes every profile-owned record only after a following read shows each one is gone. `PasswordDeleteError` is not proof of deletion. Environment variables and legacy provider slots are not deleted.
+- A custom base URL must be `https`, or `http` on a loopback host. Userinfo is rejected. This does not authenticate the local backend.
 - Resolution order for one request: profile credential, then that legacy slot, then `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`. The request does not include the key. Clients are constructed with the resolved key, model, and base URL. Profile changes do not write process environment variables.
 - If the OS keyring cannot be used, a new key stays in backend process memory and the UI says it is available for this session only. Do not write a plaintext fallback.
 - Legacy localStorage `apiKey` and `~/.docxeditor/config.json` `api_key` are removed only after a keyring read-back matches. Otherwise the only copy stays, with a warning.

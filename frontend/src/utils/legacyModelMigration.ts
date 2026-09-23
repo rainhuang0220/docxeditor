@@ -141,7 +141,7 @@ export function writeProfilesPreservingRetainedSecrets(
     const record = item as Record<string, unknown>
     if (typeof record.id === 'string') byId.set(record.id, record)
   }
-  const next = profiles.map(profile => {
+  const next: Array<{ id: string }> = profiles.map(profile => {
     const pub = {
       id: profile.id,
       label: profile.label,
@@ -155,5 +155,13 @@ export function writeProfilesPreservingRetainedSecrets(
     if (!secret) return pub
     return { ...pub, apiKey: secret }
   })
+  const written = new Set(next.map(profile => profile.id))
+  for (const id of retained) {
+    if (written.has(id)) continue
+    const previous = byId.get(id)
+    const secret = previous && typeof previous.apiKey === 'string' ? previous.apiKey : ''
+    if (!secret) continue
+    next.push(previous as { id: string })
+  }
   localStorage.setItem(MODELS_KEY, JSON.stringify(next))
 }

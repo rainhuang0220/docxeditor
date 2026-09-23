@@ -41,11 +41,11 @@ export async function getCredentialStatus(profileId: string, provider: ModelProv
   return asStatus(await res.json())
 }
 
-export async function putCredential(profileId: string, apiKey: string): Promise<CredentialStatus> {
+export async function putCredential(profileId: string, provider: ModelProvider, apiKey: string): Promise<CredentialStatus> {
   const res = await fetch(apiUrl(`/api/credentials/${encodeURIComponent(profileId)}`), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ api_key: apiKey }),
+    body: JSON.stringify({ api_key: apiKey, provider }),
   })
   if (!res.ok) throw new Error('credential save failed')
   const text = await res.text()
@@ -53,9 +53,20 @@ export async function putCredential(profileId: string, apiKey: string): Promise<
   return asStatus(JSON.parse(text))
 }
 
-export async function deleteCredential(profileId: string): Promise<void> {
-  const res = await fetch(apiUrl(`/api/credentials/${encodeURIComponent(profileId)}`), { method: 'DELETE' })
+export async function deleteCredential(profileId: string, provider: ModelProvider): Promise<void> {
+  const res = await fetch(apiUrl(`/api/credentials/${encodeURIComponent(profileId)}?provider=${encodeURIComponent(provider)}`), {
+    method: 'DELETE',
+  })
   if (!res.ok) throw new Error('credential delete failed')
+}
+
+export async function rebindUnscopedCredential(profileId: string, provider: ModelProvider): Promise<void> {
+  const res = await fetch(apiUrl(`/api/credentials/${encodeURIComponent(profileId)}/rebind`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ provider }),
+  })
+  if (!res.ok) throw new Error('credential rebind failed')
 }
 
 export async function testStoredCredential(
@@ -84,7 +95,7 @@ export async function transferLegacyCredential(input: {
     const put = await fetch(apiUrl(`/api/credentials/${encodeURIComponent(input.id)}`), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ api_key: input.apiKey }),
+      body: JSON.stringify({ api_key: input.apiKey, provider: input.provider }),
     })
     putText = await put.text()
     if (!put.ok || putText.includes(input.apiKey)) {

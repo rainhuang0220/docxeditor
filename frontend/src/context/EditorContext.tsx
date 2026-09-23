@@ -8,7 +8,7 @@ import {
   type ModelProfile, type StoredThread,
 } from '../utils/storage'
 import { migrateLegacyModelSecrets, writeProfilesPreservingRetainedSecrets } from '../utils/legacyModelMigration'
-import { transferLegacyCredential } from '../utils/credentials'
+import { rebindUnscopedCredential, transferLegacyCredential } from '../utils/credentials'
 import { showToast } from '../components/Toast'
 import {
   REVIEW_BLOCK_MESSAGE,
@@ -81,6 +81,8 @@ interface EditorContextType {
   setActiveModelId: (id: string) => void
   upsertModel: (profile: ModelProfile) => void
   deleteModel: (id: string) => void
+  /** Drop a retained legacy id only after an explicit, verified discard. */
+  releaseRetainedLegacy: (id: string) => void
   /** Set when a legacy key could not be moved into durable storage. */
   credentialWarning: string | null
   /** True while an AI mutation is waiting for Accept/Reject. */
@@ -380,9 +382,20 @@ export function EditorProvider({ children }: { children: ReactNode }) {
     })
   }, [activeModelId, models])
 
+  const releaseRetainedLegacy = useCallback((id: string) => {
+    const next = new Set(retainedLegacyRef.current)
+    next.delete(id)
+    retainedLegacyRef.current = next
+  }, [])
+
   useEffect(() => {
     let cancelled = false
-    migrateLegacyModelSecrets(transferLegacyCredential).then(outcome => {
+    migrateLegacyModelSecrets(transferLegacyCredential).then(async outcome => {
+      if (cancelled) return
+      const loaded = loadModelProfiles()
+      await Promise.all(loaded.map(profile => (
+        rebindUnscopedCredential(profile.id, profile.provider).catch(() => undefined)
+      )))
       if (cancelled) return
       retainedLegacyRef.current = new Set(outcome.retainedIds)
       setModels(loadModelProfiles())
@@ -416,7 +429,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       threads: threadSummaries,
       activeThreadId,
       startNewThread, switchThread, deleteThread, persistCurrentThread,
-      models, activeModelId, setActiveModelId, upsertModel, deleteModel, credentialWarning,
+      models, activeModelId, setActiveModelId, upsertModel, deleteModel, releaseRetainedLegacy, credentialWarning,
       reviewPending, guardSession, dispatchReview, setReviewSnapshot, getPersistableDocumentHtml, isReviewPending,
       getReviewSnapshot, canPersistCommittedDocumentNow,
     }}>
