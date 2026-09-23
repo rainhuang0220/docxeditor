@@ -8,7 +8,7 @@ import {
   type ModelProfile, type StoredThread,
 } from '../utils/storage'
 import { migrateLegacyModelSecrets, writeProfilesPreservingRetainedSecrets } from '../utils/legacyModelMigration'
-import { rebindUnscopedCredential, transferLegacyCredential } from '../utils/credentials'
+import { transferLegacyCredential } from '../utils/credentials'
 import { showToast } from '../components/Toast'
 import {
   REVIEW_BLOCK_MESSAGE,
@@ -390,12 +390,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false
-    migrateLegacyModelSecrets(transferLegacyCredential).then(async outcome => {
-      if (cancelled) return
-      const loaded = loadModelProfiles()
-      await Promise.all(loaded.map(profile => (
-        rebindUnscopedCredential(profile.id, profile.provider).catch(() => undefined)
-      )))
+    migrateLegacyModelSecrets(transferLegacyCredential).then(outcome => {
       if (cancelled) return
       retainedLegacyRef.current = new Set(outcome.retainedIds)
       setModels(loadModelProfiles())

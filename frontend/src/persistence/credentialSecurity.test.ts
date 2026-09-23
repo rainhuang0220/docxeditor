@@ -127,6 +127,32 @@ test('session-only and failed migration keep the only legacy copy', async () => 
   assert.equal(preserved.model, 'gpt-4o')
 })
 
+test('a retained key is not transferred to a provider chosen later', async () => {
+  localStorage.clear()
+  localStorage.setItem(MODELS_KEY, JSON.stringify([{ ...profile(), provider: 'openai', apiKey: SENTINEL }]))
+  writeProfilesPreservingRetainedSecrets(
+    [{ ...profile(), provider: 'anthropic', label: 'Renamed' }],
+    new Set(['profile-a']),
+  )
+  const stored = JSON.parse(localStorage.getItem(MODELS_KEY) || '[]')[0]
+  assert.equal(stored.provider, 'anthropic')
+  assert.equal(stored.secretProvider, 'openai')
+  assert.equal(stored.apiKey, SENTINEL)
+  const seen: string[] = []
+  const outcome = await migrateLegacyModelSecrets(async input => {
+    seen.push(input.provider)
+    assert.equal(input.apiKey, SENTINEL)
+    return { durable: true, accepted: true, sessionOnly: false }
+  })
+  assert.deepEqual(seen, ['openai'])
+  assert.deepEqual(outcome.scrubbedIds, ['profile-a'])
+  const scrubbed = JSON.parse(localStorage.getItem(MODELS_KEY) || '[]')[0]
+  assert.equal(scrubbed.provider, 'anthropic')
+  assert.equal(scrubbed.apiKey, undefined)
+  assert.equal(scrubbed.secretProvider, undefined)
+  assert.equal(JSON.stringify(scrubbed).includes(SENTINEL), false)
+})
+
 test('transfer helper scrubs only when PUT and GET both report keyring', async () => {
   const original = globalThis.fetch
   const calls: string[] = []
@@ -192,6 +218,7 @@ test('chat payload and credential draft never carry a stored key', () => {
     mode: 'keyring',
     persistent: true,
     source: 'profile',
+    unbound_profile_credential: false,
   }, false).includes('system keyring'), true)
   assert.equal(credentialStatusLine({
     has_key: true,
@@ -199,6 +226,7 @@ test('chat payload and credential draft never carry a stored key', () => {
     mode: 'memory',
     persistent: false,
     source: 'profile',
+    unbound_profile_credential: false,
   }, false), 'Available for this session only')
   assert.equal(credentialStatusLine(null, true).includes('backend'), true)
   assert.equal(credentialStatusLine(null, false), 'No API key for this model')

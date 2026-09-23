@@ -79,14 +79,23 @@ def validate_base_url(url: str) -> str:
     text = (url or "").strip()
     if not text:
         return ""
-    parsed = urlsplit(text)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+    try:
+        parsed = urlsplit(text)
+        hostname = parsed.hostname
+        port = parsed.port
+        scheme = parsed.scheme
+        username = parsed.username
+        password = parsed.password
+        netloc = parsed.netloc
+    except ValueError:
+        raise InvalidBaseUrl("base URL was rejected") from None
+    if scheme not in {"http", "https"} or not hostname:
         raise InvalidBaseUrl("base URL was rejected")
-    if parsed.username is not None or parsed.password is not None or "@" in parsed.netloc:
+    if username is not None or password is not None or "@" in netloc:
         raise InvalidBaseUrl("base URL was rejected")
-    if parsed.port is not None and not 1 <= parsed.port <= 65535:
+    if port is not None and not 1 <= port <= 65535:
         raise InvalidBaseUrl("base URL was rejected")
-    if parsed.scheme == "http" and not _loopback_host(parsed.hostname):
+    if scheme == "http" and not _loopback_host(hostname):
         raise InvalidBaseUrl("base URL was rejected")
     return text
 

@@ -10,7 +10,11 @@ export interface CredentialStatus {
   mode: CredentialMode
   persistent: boolean
   source: string
+  unbound_profile_credential: boolean
 }
+
+export const UNBOUND_CREDENTIAL_WARNING =
+  'A credential from an earlier version needs provider confirmation. This app cannot tell which provider that credential used.'
 
 export function credentialStatusLine(status: CredentialStatus | null, backendDown: boolean): string {
   if (backendDown) return 'Could not check the key. Is the backend running?'
@@ -32,6 +36,7 @@ function asStatus(value: unknown): CredentialStatus {
     mode: mode === 'keyring' || mode === 'memory' || mode === 'environment' ? mode : 'unavailable',
     persistent: record.persistent === true,
     source: typeof record.source === 'string' ? record.source : 'missing',
+    unbound_profile_credential: record.unbound_profile_credential === true,
   }
 }
 
@@ -58,15 +63,6 @@ export async function deleteCredential(profileId: string, provider: ModelProvide
     method: 'DELETE',
   })
   if (!res.ok) throw new Error('credential delete failed')
-}
-
-export async function rebindUnscopedCredential(profileId: string, provider: ModelProvider): Promise<void> {
-  const res = await fetch(apiUrl(`/api/credentials/${encodeURIComponent(profileId)}/rebind`), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ provider }),
-  })
-  if (!res.ok) throw new Error('credential rebind failed')
 }
 
 export async function testStoredCredential(

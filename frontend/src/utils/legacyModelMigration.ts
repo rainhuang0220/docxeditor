@@ -30,10 +30,15 @@ function providerOf(record: Record<string, unknown>): ModelProvider | null {
   return null
 }
 
+function secretProviderOf(record: Record<string, unknown>): ModelProvider | null {
+  if (record.secretProvider === 'openai' || record.secretProvider === 'anthropic') return record.secretProvider
+  return null
+}
+
 function withoutSecret(record: Record<string, unknown>): Record<string, unknown> {
   const next: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(record)) {
-    if (key === 'apiKey' || key === 'keyHint') continue
+    if (key === 'apiKey' || key === 'keyHint' || key === 'secretProvider') continue
     next[key] = value
   }
   return next
@@ -65,7 +70,7 @@ export async function migrateLegacyModelSecrets(
     const record = item as Record<string, unknown>
     if (typeof record.id !== 'string' || !record.id) continue
     if (typeof record.apiKey !== 'string' || !record.apiKey || isMask(record.apiKey)) continue
-    const provider = providerOf(record)
+    const provider = secretProviderOf(record) || providerOf(record)
     if (!provider) continue
     secrets.push({ id: record.id, provider, apiKey: record.apiKey })
   }
@@ -152,8 +157,9 @@ export function writeProfilesPreservingRetainedSecrets(
     if (!retained.has(profile.id)) return pub
     const previous = byId.get(profile.id)
     const secret = previous && typeof previous.apiKey === 'string' ? previous.apiKey : ''
-    if (!secret) return pub
-    return { ...pub, apiKey: secret }
+    if (!previous || !secret) return pub
+    const bound = secretProviderOf(previous) || providerOf(previous)
+    return bound ? { ...pub, apiKey: secret, secretProvider: bound } : { ...pub, apiKey: secret }
   })
   const written = new Set(next.map(profile => profile.id))
   for (const id of retained) {

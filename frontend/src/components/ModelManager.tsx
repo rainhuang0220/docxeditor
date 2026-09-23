@@ -12,6 +12,7 @@ import {
 } from '../utils/credentials'
 import { draftFromStatus, reduceCredentialDraft } from '../utils/credentialEditor'
 import { commitModelDeletion, planProviderCredentialWrite, profileHasRetainedSecret } from '../utils/modelCredentialDeletion'
+import { UNBOUND_CREDENTIAL_WARNING, confirmUnscopedRecovery, discardEarlierCredential } from '../utils/confirmUnscopedRecovery'
 
 const DEFAULT_MODELS: Record<ModelProvider, string> = {
   openai: 'gpt-4o',
@@ -50,6 +51,7 @@ export function ModelManager() {
   const [credentialDown, setCredentialDown] = useState(false)
   const [listStatus, setListStatus] = useState<Record<string, CredentialStatus | null>>({})
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [recoveryMessage, setRecoveryMessage] = useState<string | null>(null)
   const [originalProvider, setOriginalProvider] = useState<ModelProvider>('openai')
 
   const refreshList = async (current = models) => {
@@ -200,6 +202,35 @@ export function ModelManager() {
     setDeleteError(null)
   }
 
+  const handleRecover = async (model: ModelProfile) => {
+    const agreed = window.confirm(
+      `Bind the earlier credential to ${model.provider}? This app cannot tell which provider it originally used.`,
+    )
+    if (!agreed) return
+    const result = await confirmUnscopedRecovery({
+      profileId: model.id,
+      provider: model.provider,
+      confirmed: true,
+    })
+    setRecoveryMessage(result.ok ? null : result.message)
+    if (result.ok && result.status) {
+      setListStatus(current => ({ ...current, [model.id]: result.status }))
+      void refreshList()
+    }
+  }
+
+  const handleDiscardEarlier = async (model: ModelProfile) => {
+    const agreed = window.confirm('Discard the earlier unconfirmed credential? The saved key for this provider is not removed.')
+    if (!agreed) return
+    const discarded = await discardEarlierCredential(model.id)
+    if (!discarded) {
+      setRecoveryMessage('Could not discard the earlier credential. It was kept.')
+      return
+    }
+    setRecoveryMessage(null)
+    void refreshList()
+  }
+
   const editorLine = credentialStatusLine(credential, credentialDown)
 
   return (
@@ -228,6 +259,9 @@ export function ModelManager() {
             )}
             {deleteError && (
               <p className="mb-4 text-[12.5px] text-[var(--color-danger)] leading-relaxed">{deleteError}</p>
+            )}
+            {recoveryMessage && (
+              <p className="mb-4 text-[12.5px] text-[var(--color-danger)] leading-relaxed">{recoveryMessage}</p>
             )}
 
             {!editing ? (
@@ -261,7 +295,26 @@ export function ModelManager() {
                             {model.provider} · {model.model || 'default'}
                             {line ? ` · ${line}` : ''}
                           </div>
+                          {row?.unbound_profile_credential && (
+                            <p className="text-[12px] text-[var(--color-danger)] mt-1 leading-relaxed">{UNBOUND_CREDENTIAL_WARNING}</p>
+                          )}
                         </div>
+                        {row?.unbound_profile_credential && (
+                          <button
+                            onClick={() => void handleRecover(model)}
+                            className="text-[11px] font-mono uppercase tracking-[0.06em] text-[var(--color-text-secondary)] px-2 py-1"
+                          >
+                            Confirm provider
+                          </button>
+                        )}
+                        {row?.unbound_profile_credential && (
+                          <button
+                            onClick={() => void handleDiscardEarlier(model)}
+                            className="text-[11px] font-mono uppercase tracking-[0.06em] text-[var(--color-danger)] px-2 py-1"
+                          >
+                            Discard earlier credential
+                          </button>
+                        )}
                         <button
                           onClick={() => startEdit(model)}
                           className="text-[11px] font-mono uppercase tracking-[0.06em] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] px-2 py-1 transition-colors"
@@ -343,6 +396,9 @@ export function ModelManager() {
                 </div>
 
                 <div>
+                  {credential?.unbound_profile_credential && (
+                    <p className="text-[12.5px] text-[var(--color-danger)] leading-relaxed">{UNBOUND_CREDENTIAL_WARNING}</p>
+                  )}
                   <label className="field-label">API Key</label>
                   <input
                     type="password"

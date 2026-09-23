@@ -301,25 +301,53 @@ class CredentialStore:
         self.memory.set(legacy_account(provider), secret)
 
     def store_legacy_durable(self, provider: str, secret: str) -> bool:
-        """Write the legacy slot and require a matching read-back. Restore on failure."""
+        """Write the legacy slot and require a matching read-back.
+
+        Returns False when the write or the rollback cannot be verified.
+        Does not raise: startup must be able to keep the plaintext file.
+        Does not claim the key is absent or present when a read fails.
+        """
         if not self.keyring_available or self.durable is None:
             return False
         account = legacy_account(provider)
-        previous = None
         try:
-            previous = self.durable.get(account)
-        except Exception:
-            previous = None
+            previous = self._strict_get(self.durable, account)
+        except CredentialUnverifiable:
+            return False
+        wrote = False
         try:
             self.durable.set(account, secret)
-            got = self.durable.get(account)
+            wrote = True
+            got = self._strict_get(self.durable, account)
             if got is not None and secrets_match(got, secret):
                 return True
+        except CredentialUnverifiable:
+            wrote = True
         except Exception:
-            self._restore(self.durable, account, previous)
+            wrote = True
+        if not wrote:
             return False
-        self._restore(self.durable, account, previous)
+        try:
+            self._restore(self.durable, account, previous)
+        except (CredentialStillPresent, CredentialUnverifiable, CredentialStoreError):
+            return False
+        except Exception:
+            return False
         return False
+
+    def legacy_durable_value(self, provider: str) -> str | None:
+        """Read the legacy slot. Raises CredentialUnverifiable when the read fails."""
+        if self.durable is None:
+            return None
+        return self._strict_get(self.durable, legacy_account(provider))
+
+    def discard_unscoped(self, profile_id: str) -> bool:
+        """Delete only the branch-era account, after a verified read-back."""
+        account = unscoped_account(profile_id)
+        if self.durable is not None:
+            self._revoke_account(self.durable, account)
+        self.memory.delete(account)
+        return not self.has_unscoped(profile_id)
 
     def delete_profile(self, profile_id: str, provider: str) -> CredentialStatus:
         """Remove every profile-owned record, then report this provider's status.
@@ -418,9 +446,10 @@ class CredentialStore:
         if profile_id:
             check_profile_id(profile_id)
         resolved = self.resolve(profile_id, provider)
-        unbound = bool(profile_id) and self.has_unscoped(profile_id) and (
-            resolved is None or resolved.source != "profile"
-        )
+        # Stay true while the branch-era account still exists, even if a
+        # different provider-scoped key is already present. Otherwise the
+        # leftover credential disappears from the UI.
+        unbound = bool(profile_id) and self.has_unscoped(profile_id)
         if resolved is None:
             base = CredentialStatus(False, "", "unavailable", False, "missing")
         else:

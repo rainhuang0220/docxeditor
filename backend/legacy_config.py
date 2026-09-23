@@ -14,7 +14,7 @@ import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
-from .credentials import CredentialStore
+from .credentials import CredentialStore, CredentialUnverifiable, secrets_match
 
 
 @dataclass(frozen=True)
@@ -66,6 +66,65 @@ def _atomic_write(path: Path, payload: dict) -> None:
         raise
 
 
+def _legacy_not_migrated(
+    path: Path,
+    store: CredentialStore,
+    provider: str,
+    api_key: str,
+    legacy_id: str,
+) -> LegacyMigration:
+    """Keep the plaintext file. Use session memory only when the slot is proven empty."""
+    try:
+        current = store.legacy_durable_value(provider)
+    except CredentialUnverifiable:
+        message = (
+            "Secure storage could not be verified. The saved copy was kept. "
+            "No session copy was made."
+        )
+        warnings.warn(message, stacklevel=2)
+        return LegacyMigration("failed", message, legacy_id)
+    if current is not None and secrets_match(current, api_key):
+        return _scrub_legacy_file(path, api_key, legacy_id)
+    if current is None:
+        store.remember_legacy(provider, api_key)
+        message = (
+            "Persistent secure storage did not accept the API key. It is loaded "
+            "for this session only; the saved copy was kept."
+        )
+        warnings.warn(message, stacklevel=2)
+        return LegacyMigration("retained", message, legacy_id)
+    message = "The API key could not be verified in secure storage. The saved copy was kept."
+    warnings.warn(message, stacklevel=2)
+    return LegacyMigration("failed", message, legacy_id)
+
+
+def _scrub_legacy_file(path: Path, api_key: str, legacy_id: str) -> LegacyMigration:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        message = "The API key was stored securely, but the old copy could not be read to remove it."
+        warnings.warn(message, stacklevel=2)
+        return LegacyMigration("failed", message, legacy_id)
+    if not isinstance(data, dict):
+        message = "The API key was stored securely, but the old copy could not be removed."
+        warnings.warn(message, stacklevel=2)
+        return LegacyMigration("failed", message, legacy_id)
+    cleaned = {key: value for key, value in data.items() if key != "api_key"}
+    try:
+        _atomic_write(path, cleaned)
+        written = path.read_text(encoding="utf-8")
+        parsed = json.loads(written)
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        message = "The API key was stored securely, but the old copy could not be removed."
+        warnings.warn(message, stacklevel=2)
+        return LegacyMigration("failed", message, legacy_id)
+    if not isinstance(parsed, dict) or api_key in written or "api_key" in parsed:
+        message = "The old config still contains a secret."
+        warnings.warn(message, stacklevel=2)
+        return LegacyMigration("failed", message, legacy_id)
+    return LegacyMigration("migrated", None, legacy_id)
+
+
 def migrate_legacy_config(path: Path, store: CredentialStore) -> LegacyMigration:
     if not path.exists():
         return LegacyMigration("not_needed", None, None)
@@ -104,20 +163,23 @@ def migrate_legacy_config(path: Path, store: CredentialStore) -> LegacyMigration
         warnings.warn(message, stacklevel=2)
         return LegacyMigration("retained", message, legacy_id)
 
-    if not store.store_legacy_durable(provider, api_key):
-        message = "The API key could not be verified in secure storage. The saved copy was kept."
-        warnings.warn(message, stacklevel=2)
-        return LegacyMigration("failed", message, legacy_id)
+    try:
+        stored = store.store_legacy_durable(provider, api_key)
+    except Exception:
+        stored = False
+    if not stored:
+        return _legacy_not_migrated(path, store, provider, api_key, legacy_id)
 
     cleaned = {key: value for key, value in data.items() if key != "api_key"}
     try:
         _atomic_write(path, cleaned)
         written = path.read_text(encoding="utf-8")
-    except OSError:
+        parsed = json.loads(written)
+    except (OSError, UnicodeError, json.JSONDecodeError):
         message = "The API key was stored securely, but the old copy could not be removed."
         warnings.warn(message, stacklevel=2)
         return LegacyMigration("failed", message, legacy_id)
-    if api_key in written or "api_key" in json.loads(written):
+    if not isinstance(parsed, dict) or api_key in written or "api_key" in parsed:
         message = "The old config still contains a secret."
         warnings.warn(message, stacklevel=2)
         return LegacyMigration("failed", message, legacy_id)

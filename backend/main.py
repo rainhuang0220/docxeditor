@@ -1,5 +1,6 @@
 import os
 import re
+import warnings
 from contextlib import asynccontextmanager
 from urllib.parse import quote
 
@@ -29,6 +30,7 @@ from .provider_runtime import (
     concrete_base_url,
     concrete_model,
     redact,
+    validate_base_url,
 )
 
 # Vite devUrl is http://localhost:5173. Tauri 2.11 production webview origins,
@@ -111,6 +113,16 @@ def _resolve_provider(profile_id: str, provider: str, model: str, base_url: str)
     )
 
 
+def _check_base_url(url: str) -> JSONResponse | None:
+    if not (url or "").strip():
+        return None
+    try:
+        validate_base_url(url)
+    except (InvalidBaseUrl, ValueError):
+        return _rejected_base_url()
+    return None
+
+
 def _rejected_base_url() -> JSONResponse:
     return JSONResponse(
         status_code=422,
@@ -156,7 +168,14 @@ async def _lifespan(app: FastAPI):
     app.state.credentials = store
     app.state.client_factory = None
     app.state.credential_tester = None
-    app.state.legacy_migration = migrate_legacy_config(default_config_path(), store)
+    try:
+        app.state.legacy_migration = migrate_legacy_config(default_config_path(), store)
+    except Exception:
+        warnings.warn(
+            "Legacy config migration could not finish. The saved copy was left unchanged.",
+            stacklevel=2,
+        )
+        app.state.legacy_migration = None
     yield
 
 
@@ -191,9 +210,12 @@ async def reject_invalid_request(_request, exc: RequestValidationError):
 
 @app.post("/api/chat")
 async def chat(req: ChatRequest):
+    rejected = _check_base_url(req.base_url)
+    if rejected is not None:
+        return rejected
     try:
         spec = _resolve_provider(req.profile_id, req.provider, req.model, req.base_url)
-    except InvalidBaseUrl:
+    except (InvalidBaseUrl, ValueError):
         return _rejected_base_url()
     if spec is None:
         return _missing_credential(req.profile_id, req.provider)
@@ -210,9 +232,12 @@ async def chat(req: ChatRequest):
 
 @app.post("/api/chat/stream")
 async def chat_stream(req: ChatRequest):
+    rejected = _check_base_url(req.base_url)
+    if rejected is not None:
+        return rejected
     try:
         spec = _resolve_provider(req.profile_id, req.provider, req.model, req.base_url)
-    except InvalidBaseUrl:
+    except (InvalidBaseUrl, ValueError):
         return _rejected_base_url()
     if spec is None:
         return _missing_credential(req.profile_id, req.provider)
@@ -328,6 +353,29 @@ async def _default_tester(spec: ResolvedProvider) -> None:
     )
 
 
+@app.post("/api/credentials/{profile_id}/discard-unscoped")
+async def discard_unscoped_credential(profile_id: str):
+    checked, error = _profile_or_400(profile_id)
+    if error is not None:
+        return error
+    try:
+        discarded = _store().discard_unscoped(checked)
+    except CredentialStoreError:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": {
+                    "code": "credential_store_failed",
+                    "message": "The earlier credential could not be discarded.",
+                }
+            },
+        )
+    return {
+        "discarded": discarded,
+        "unbound_profile_credential": _store().has_unscoped(checked),
+    }
+
+
 @app.post("/api/credentials/{profile_id}/rebind")
 async def rebind_credential(profile_id: str, body: RebindCredentialRequest):
     checked, error = _profile_or_400(profile_id)
@@ -350,12 +398,15 @@ async def rebind_credential(profile_id: str, body: RebindCredentialRequest):
 
 @app.post("/api/credentials/{profile_id}/test")
 async def test_credential(profile_id: str, body: TestCredentialRequest):
+    rejected = _check_base_url(body.base_url)
+    if rejected is not None:
+        return rejected
     checked, error = _profile_or_400(profile_id)
     if error is not None:
         return error
     try:
         spec = _resolve_provider(checked, body.provider, body.model, body.base_url)
-    except InvalidBaseUrl:
+    except (InvalidBaseUrl, ValueError):
         return _rejected_base_url()
     if spec is None:
         return {"ok": False, "error": "No API key is configured for this profile."}

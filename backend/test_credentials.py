@@ -253,9 +253,17 @@ def test_legacy_migration_preserves_only_copy(tmp: Path):
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         result = migrate_legacy_config(path, store)
-    assert result.status == "failed"
+    assert result.status == "retained"
+    assert result.status != "migrated"
     assert path.read_text() == original
+    assert "session" in (result.warning or "")
     assert SENTINEL not in " ".join(str(item.message) for item in caught)
+    assert store.durable.data == {}
+    remembered = store.resolve("any", "anthropic")
+    assert remembered is not None
+    assert remembered.secret == SENTINEL
+    assert remembered.mode == "memory"
+    assert remembered.source == "legacy"
 
     unavailable = _store(keyring=False)
     kept = tmp / "kept.json"
@@ -914,6 +922,390 @@ def test_revocation_identity_and_base_url():
     print("PASS: revocation, provider identity, base URL")
 
 
+class RecordingStore:
+    def __init__(self, data=None):
+        self.data = dict(data or {})
+        self.events = []
+
+    def get(self, account):
+        self.events.append(("get", account))
+        return self.data.get(account)
+
+    def set(self, account, secret):
+        self.events.append(("set", account))
+        self.data[account] = secret
+
+    def delete(self, account):
+        self.events.append(("delete", account))
+        self.data.pop(account, None)
+
+
+def test_unscoped_recovery_and_legacy_startup(tmp: Path):
+    pid = "profile-anth"
+    recorded = RecordingStore({f"profile:{pid}": SENTINEL})
+    store = CredentialStore(recorded, MemorySecretStore(), MappingEnv({}), True)
+    recorded.events.clear()
+    assert store.resolve(pid, "anthropic") is None
+    assert store.resolve(pid, "openai") is None
+    assert f"profile:{pid}" not in {account for _kind, account in recorded.events}
+    assert not any(kind == "set" for kind, _account in recorded.events)
+    assert store.status(pid, "anthropic").unbound_profile_credential is True
+    assert SENTINEL not in json.dumps(store.status(pid, "anthropic").public_dict())
+    provider_calls = []
+
+    def reject_provider(_spec):
+        provider_calls.append("called")
+        raise AssertionError("chat must not call the provider for an unscoped credential")
+
+    assert validate_base_url("http://[::1]/v1") == "http://[::1]/v1"
+    assert validate_base_url("https://proxy.example/v1") == "https://proxy.example/v1"
+    for bad in ("http://127.0.0.1:99999/v1", "http://[::1", "http://[gggg::1]/v1", "https://proxy.example:99999/v1"):
+        try:
+            validate_base_url(bad)
+            raise AssertionError(bad)
+        except InvalidBaseUrl:
+            pass
+        except ValueError as exc:
+            raise AssertionError(f"unsanitized parser error for {bad}") from exc
+
+    with TestClient(app) as client:
+        _use(store)
+        app.state.client_factory = reject_provider
+        got = client.get(f"/api/credentials/{pid}", params={"provider": "anthropic"})
+        recorded.events.clear()
+        chat = client.post("/api/chat", json={
+            "message": "hi",
+            "profile_id": pid,
+            "provider": "anthropic",
+            "model": "claude",
+        })
+        chat_events = list(recorded.events)
+        bad_port = client.post("/api/chat", json={
+            "message": "hi",
+            "profile_id": pid,
+            "provider": "openai",
+            "base_url": "http://127.0.0.1:99999/v1",
+        })
+        bad_v6 = client.post("/api/chat", json={
+            "message": "hi",
+            "profile_id": pid,
+            "provider": "openai",
+            "base_url": "http://[::1",
+        })
+        bad_v6_host = client.post("/api/chat/stream", json={
+            "message": "hi",
+            "profile_id": pid,
+            "provider": "openai",
+            "base_url": "http://[gggg::1]/v1",
+        })
+        loopback = client.post("/api/chat", json={
+            "message": "hi",
+            "profile_id": pid,
+            "provider": "openai",
+            "base_url": "http://[::1]/v1",
+        })
+    assert got.status_code == 200
+    assert got.json()["unbound_profile_credential"] is True
+    assert got.json()["has_key"] is False
+    assert got.json()["source"] == "missing"
+    assert SENTINEL not in got.text
+    assert chat.status_code == 401
+    assert provider_calls == []
+    assert SENTINEL not in chat.text
+    assert f"profile:{pid}" not in {account for _kind, account in chat_events}
+    assert not any(kind != "get" for kind, _account in chat_events)
+    assert f"profile:{pid}:anthropic" not in recorded.data
+    assert recorded.data[f"profile:{pid}"] == SENTINEL
+    for rejected in (bad_port, bad_v6, bad_v6_host):
+        assert rejected.status_code == 422
+        assert rejected.json()["error"]["code"] == "invalid_base_url"
+        assert SENTINEL not in rejected.text
+        assert "99999" not in rejected.text
+        assert "[::1" not in rejected.text
+        assert "gggg" not in rejected.text
+    assert loopback.status_code == 401
+
+    rebound = store.rebind_unscoped(pid, "openai")
+    assert rebound.source == "profile"
+    assert rebound.unbound_profile_credential is False
+    assert store.resolve(pid, "openai").secret == SENTINEL
+    assert store.resolve(pid, "anthropic") is None
+    assert recorded.data[f"profile:{pid}:openai"] == SENTINEL
+    assert f"profile:{pid}:anthropic" not in recorded.data
+    assert f"profile:{pid}" not in recorded.data
+    set_at = [index for index, event in enumerate(recorded.events) if event == ("set", f"profile:{pid}:openai")]
+    delete_at = [index for index, event in enumerate(recorded.events) if event == ("delete", f"profile:{pid}")]
+    assert set_at and delete_at and set_at[0] < delete_at[0]
+    repeat = store.rebind_unscoped(pid, "openai")
+    assert repeat.source == "profile"
+    assert recorded.data[f"profile:{pid}:openai"] == SENTINEL
+    again = store.rebind_unscoped(pid, "anthropic")
+    assert store.resolve(pid, "anthropic") is None
+    assert f"profile:{pid}:anthropic" not in recorded.data
+
+    with TestClient(app) as client:
+        fresh = CredentialStore(
+            MemorySecretStore({f"profile:{pid}": SENTINEL}),
+            MemorySecretStore(),
+            MappingEnv({}),
+            True,
+        )
+        _use(fresh)
+        first = client.post(f"/api/credentials/{pid}/rebind", json={"provider": "openai"})
+        second = client.post(f"/api/credentials/{pid}/rebind", json={"provider": "anthropic"})
+        third = client.post(f"/api/credentials/{pid}/rebind", json={"provider": "openai"})
+    assert first.status_code == 200
+    assert first.json()["source"] == "profile"
+    assert first.json()["has_key"] is True
+    assert first.json()["unbound_profile_credential"] is False
+    assert SENTINEL not in first.text
+    assert fresh.durable.data[f"profile:{pid}:openai"] == SENTINEL
+    assert f"profile:{pid}:anthropic" not in fresh.durable.data
+    assert f"profile:{pid}" not in fresh.durable.data
+    assert second.status_code == 200
+    assert second.json()["source"] != "profile"
+    assert SENTINEL not in second.text
+    assert third.status_code == 200
+    assert fresh.durable.data[f"profile:{pid}:openai"] == SENTINEL
+    assert f"profile:{pid}:anthropic" not in fresh.durable.data
+
+    class Frozen:
+        def __init__(self):
+            self.data = {"profile:pid:openai": "other-key-zzzz", "profile:pid": SENTINEL}
+
+        def get(self, account):
+            return self.data.get(account)
+
+        def set(self, account, secret):
+            raise AssertionError("must not overwrite")
+
+        def delete(self, account):
+            raise AssertionError("must not delete")
+
+    frozen = CredentialStore(Frozen(), MemorySecretStore(), MappingEnv({}), True)
+    with TestClient(app) as client:
+        _use(frozen)
+        refused = client.post("/api/credentials/pid/rebind", json={"provider": "openai"})
+        other = client.post("/api/credentials/pid/rebind", json={"provider": "anthropic"})
+    assert refused.status_code == 200
+    assert refused.json()["source"] == "profile"
+    assert refused.json()["unbound_profile_credential"] is True
+    assert other.status_code == 200
+    assert other.json()["unbound_profile_credential"] is True
+    assert "profile:pid:anthropic" not in frozen.durable.data
+    assert frozen.durable.data["profile:pid"] == SENTINEL
+    assert frozen.durable.data["profile:pid:openai"] == "other-key-zzzz"
+    assert SENTINEL not in refused.text and SENTINEL not in other.text
+    assert frozen.has_unscoped("pid") is True
+
+    class NoSet:
+        def __init__(self):
+            self.data = {"profile:pid": SENTINEL}
+            self.deletes = []
+
+        def get(self, account):
+            return self.data.get(account)
+
+        def set(self, account, secret):
+            raise OSError("cannot bind")
+
+        def delete(self, account):
+            self.deletes.append(account)
+
+    stuck = CredentialStore(NoSet(), MemorySecretStore(), MappingEnv({}), True)
+    with TestClient(app) as client:
+        _use(stuck)
+        res = client.post("/api/credentials/pid/rebind", json={"provider": "openai"})
+    assert res.status_code == 503
+    assert res.json()["error"]["code"] == "credential_store_failed"
+    assert SENTINEL not in res.text
+    assert stuck.durable.data["profile:pid"] == SENTINEL
+    assert stuck.durable.deletes == []
+
+    discard_store = RecordingStore({
+        "profile:keep:openai": "other-key-zzzz",
+        "profile:keep": SENTINEL,
+    })
+    discardable = CredentialStore(discard_store, MemorySecretStore(), MappingEnv({}), True)
+    with TestClient(app) as client:
+        _use(discardable)
+        discarded = client.post("/api/credentials/keep/discard-unscoped")
+    assert discarded.status_code == 200
+    assert discarded.json()["discarded"] is True
+    assert discarded.json()["unbound_profile_credential"] is False
+    assert SENTINEL not in discarded.text
+    assert discard_store.data["profile:keep:openai"] == "other-key-zzzz"
+    assert "profile:keep" not in discard_store.data
+
+    class Sticky:
+        def __init__(self):
+            self.data = {"profile:keep": SENTINEL, "profile:keep:openai": "other-key-zzzz"}
+
+        def get(self, account):
+            return self.data.get(account)
+
+        def set(self, account, secret):
+            raise AssertionError("discard must not write")
+
+        def delete(self, account):
+            raise OSError("denied")
+
+    sticky = CredentialStore(Sticky(), MemorySecretStore(), MappingEnv({}), True)
+    with TestClient(app) as client:
+        _use(sticky)
+        denied = client.post("/api/credentials/keep/discard-unscoped")
+    assert denied.status_code == 503
+    assert SENTINEL not in denied.text
+    assert sticky.durable.data["profile:keep"] == SENTINEL
+    assert sticky.durable.data["profile:keep:openai"] == "other-key-zzzz"
+    assert sticky.has_unscoped("keep") is True
+
+    owned = RecordingStore({
+        "profile:gone:openai": "oa-key-zzzz",
+        "profile:gone:anthropic": "an-key-zzzz",
+        "profile:gone": SENTINEL,
+        "unscoped-consumed:gone": "openai",
+        "legacy-provider:openai": "legacy-keep-zzzz",
+    })
+    owned_store = CredentialStore(owned, MemorySecretStore(), MappingEnv({}), True)
+    with TestClient(app) as client:
+        _use(owned_store)
+        removed = client.delete("/api/credentials/gone", params={"provider": "openai"})
+    assert removed.status_code == 200
+    assert SENTINEL not in removed.text
+    for account in ("profile:gone:openai", "profile:gone:anthropic", "profile:gone", "unscoped-consumed:gone"):
+        assert account not in owned.data
+    assert owned.data["legacy-provider:openai"] == "legacy-keep-zzzz"
+
+    class RollbackFails:
+        def __init__(self):
+            self.data = {}
+            self.phase = "ready"
+
+        def get(self, account):
+            if self.phase == "unread":
+                raise OSError("unreadable")
+            return self.data.get(account)
+
+        def set(self, account, secret):
+            self.data[account] = secret
+            self.phase = "unread"
+
+        def delete(self, account):
+            raise OSError("cannot roll back")
+
+    path = tmp / "config.json"
+    path.write_text(json.dumps({"provider": "openai", "api_key": SENTINEL, "model": "gpt-4o"}))
+    rollback_store = CredentialStore(RollbackFails(), MemorySecretStore(), MappingEnv({}), True)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = migrate_legacy_config(path, rollback_store)
+    assert result.status == "failed"
+    assert result.status != "migrated"
+    assert SENTINEL in path.read_text()
+    assert "api_key" in path.read_text()
+    joined = " ".join(str(item.message) for item in caught)
+    assert SENTINEL not in joined
+    assert rollback_store.resolve("any", "openai") is None
+    assert rollback_store.memory.data == {}
+
+    class SetFails:
+        def __init__(self):
+            self.data = {}
+
+        def get(self, account):
+            return self.data.get(account)
+
+        def set(self, account, secret):
+            raise OSError("refused")
+
+        def delete(self, account):
+            self.data.pop(account, None)
+
+    session_path = tmp / "session.json"
+    session_path.write_text(json.dumps({"provider": "openai", "api_key": SENTINEL, "model": "gpt-4o"}))
+    session_store = CredentialStore(SetFails(), MemorySecretStore(), MappingEnv({}), True)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        retained = migrate_legacy_config(session_path, session_store)
+    assert retained.status == "retained"
+    assert retained.status != "migrated"
+    assert "session" in (retained.warning or "")
+    assert SENTINEL not in " ".join(str(item.message) for item in caught)
+    assert SENTINEL in session_path.read_text()
+    assert session_store.durable.data == {}
+    remembered = session_store.resolve("any", "openai")
+    assert remembered is not None and remembered.secret == SENTINEL and remembered.mode == "memory"
+
+    ok_path = tmp / "ok.json"
+    ok_path.write_text(json.dumps({"provider": "openai", "api_key": SENTINEL, "model": "gpt-4o", "extra": "keep"}))
+    ok_store = _store(durable=MemorySecretStore(), keyring=True)
+    migrated = migrate_legacy_config(ok_path, ok_store)
+    assert migrated.status == "migrated"
+    assert migrated.warning is None
+    written = json.loads(ok_path.read_text())
+    assert "api_key" not in written
+    assert SENTINEL not in ok_path.read_text()
+    assert written["extra"] == "keep"
+    assert ok_store.durable.data["legacy-provider:openai"] == SENTINEL
+
+    from . import main as mainmod
+    previous_path = os.environ.get("DOCXEDITOR_CONFIG_PATH")
+    previous_open = mainmod.open_credential_store
+
+    def restore_startup():
+        mainmod.open_credential_store = previous_open
+        if previous_path is None:
+            os.environ.pop("DOCXEDITOR_CONFIG_PATH", None)
+        else:
+            os.environ["DOCXEDITOR_CONFIG_PATH"] = previous_path
+
+    os.environ["DOCXEDITOR_CONFIG_PATH"] = str(path)
+    mainmod.open_credential_store = lambda *args, **kwargs: CredentialStore(
+        RollbackFails(), MemorySecretStore(), MappingEnv({}), True,
+    )
+    try:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with TestClient(app) as client:
+                failed_health = client.get("/api/health")
+        assert SENTINEL not in " ".join(str(item.message) for item in caught)
+    finally:
+        restore_startup()
+    assert failed_health.status_code == 200
+    assert failed_health.json()["status"] == "ok"
+    assert failed_health.json()["legacy_migration"] == "failed"
+    assert SENTINEL not in failed_health.text
+    assert SENTINEL in path.read_text()
+
+    os.environ["DOCXEDITOR_CONFIG_PATH"] = str(session_path)
+    started = {}
+
+    def open_session(*_args, **_kwargs):
+        started["store"] = CredentialStore(SetFails(), MemorySecretStore(), MappingEnv({}), True)
+        return started["store"]
+
+    mainmod.open_credential_store = open_session
+    try:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with TestClient(app) as client:
+                health = client.get("/api/health")
+        assert SENTINEL not in " ".join(str(item.message) for item in caught)
+    finally:
+        restore_startup()
+    assert health.status_code == 200
+    assert health.json()["status"] == "ok"
+    assert health.json()["legacy_migration"] == "retained"
+    assert SENTINEL not in health.text
+    assert SENTINEL in session_path.read_text()
+    started_secret = started["store"].resolve("any", "openai")
+    assert started_secret is not None and started_secret.mode == "memory"
+    assert started_secret.secret == SENTINEL
+    assert started["store"].durable.data == {}
+    print("PASS: unscoped recovery and legacy startup")
+
+
 def main():
     test_mask_and_profile_isolation()
     test_memory_fallback_and_precedence()
@@ -929,6 +1321,8 @@ def main():
     test_http_credentials_and_cors()
     test_csp_and_fonts()
     test_revocation_identity_and_base_url()
+    with tempfile.TemporaryDirectory() as directory:
+        test_unscoped_recovery_and_legacy_startup(Path(directory))
     print("ALL CREDENTIAL TESTS PASSED")
 
 
