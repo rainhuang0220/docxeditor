@@ -12,4 +12,5 @@ if [ -f backend/.venv/bin/activate ]; then
   source backend/.venv/bin/activate
 fi
 
-python3 -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
+# Browser development only. The packaged app ignores this flag.
+python3 -m backend.desktop_runtime --dev-insecure

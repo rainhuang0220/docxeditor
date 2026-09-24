@@ -1,4 +1,4 @@
-import { apiUrl } from './api.ts'
+import { apiFetch } from './api.ts'
 import type { ModelProvider } from './storage.ts'
 import type { TransferResult } from './legacyModelMigration.ts'
 
@@ -41,13 +41,13 @@ function asStatus(value: unknown): CredentialStatus {
 }
 
 export async function getCredentialStatus(profileId: string, provider: ModelProvider): Promise<CredentialStatus> {
-  const res = await fetch(apiUrl(`/api/credentials/${encodeURIComponent(profileId)}?provider=${encodeURIComponent(provider)}`))
+  const res = await apiFetch(`/api/credentials/${encodeURIComponent(profileId)}?provider=${encodeURIComponent(provider)}`)
   if (!res.ok) throw new Error('credential status failed')
   return asStatus(await res.json())
 }
 
 export async function putCredential(profileId: string, provider: ModelProvider, apiKey: string): Promise<CredentialStatus> {
-  const res = await fetch(apiUrl(`/api/credentials/${encodeURIComponent(profileId)}`), {
+  const res = await apiFetch(`/api/credentials/${encodeURIComponent(profileId)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ api_key: apiKey, provider }),
@@ -59,7 +59,7 @@ export async function putCredential(profileId: string, provider: ModelProvider, 
 }
 
 export async function deleteCredential(profileId: string, provider: ModelProvider): Promise<void> {
-  const res = await fetch(apiUrl(`/api/credentials/${encodeURIComponent(profileId)}?provider=${encodeURIComponent(provider)}`), {
+  const res = await apiFetch(`/api/credentials/${encodeURIComponent(profileId)}?provider=${encodeURIComponent(provider)}`, {
     method: 'DELETE',
   })
   if (!res.ok) throw new Error('credential delete failed')
@@ -71,7 +71,7 @@ export async function testStoredCredential(
   model: string,
   baseUrl: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  const res = await fetch(apiUrl(`/api/credentials/${encodeURIComponent(profileId)}/test`), {
+  const res = await apiFetch(`/api/credentials/${encodeURIComponent(profileId)}/test`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ provider, model, base_url: baseUrl }),
@@ -88,7 +88,7 @@ export async function transferLegacyCredential(input: {
 }): Promise<TransferResult> {
   let putText = ''
   try {
-    const put = await fetch(apiUrl(`/api/credentials/${encodeURIComponent(input.id)}`), {
+    const put = await apiFetch(`/api/credentials/${encodeURIComponent(input.id)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ api_key: input.apiKey, provider: input.provider }),

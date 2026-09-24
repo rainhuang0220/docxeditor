@@ -1,13 +1,16 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "enables the default permissions",
-  "windows": [
-    "main"
-  ],
+  "description": "Local main window access to the backend proxy",
+  "windows": ["main"],
   "permissions": [
     "core:default",
-    "shell:allow-spawn",
-    "shell:allow-execute"
+    "allow-api-request",
+    "allow-api-stream-reserve",
+    "allow-api-stream",
+    "allow-api-stream-release",
+    "allow-api-cancel",
+    "allow-backend-status",
+    "allow-backend-retry"
   ]
 }

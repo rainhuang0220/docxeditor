@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { ArrowUp, X, Check, XCircle, Square, Sparkles, Loader2, ChevronDown, Plus, MessageSquare, FileText, Languages, Wand2, ListChecks, AlignLeft, Heading1 } from 'lucide-react'
 import { useEditorContext } from '../context/EditorContext'
-import { apiUrl } from '../utils/api'
+import { apiFetch } from '../utils/api'
 import { buildChatRequest } from '../utils/chatRequest'
 import { getCredentialStatus } from '../utils/credentials'
 import { initialState, reduce, type ChatEvent, type Effect, type MachineState } from '../ai/streamMachine'
@@ -427,7 +427,7 @@ export function AIPanel() {
         profile,
       }))
 
-      const res = await fetch(apiUrl('/api/chat/stream'), {
+      const res = await apiFetch('/api/chat/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: payload,
@@ -449,7 +449,7 @@ export function AIPanel() {
       }
 
       if (!res.ok || !res.body) {
-        const fallbackRes = await fetch(apiUrl('/api/chat'), {
+        const fallbackRes = await apiFetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: payload,

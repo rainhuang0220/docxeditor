@@ -1,4 +1,4 @@
-import { apiUrl } from './api.ts'
+import { apiFetch } from './api.ts'
 import {
   UNBOUND_CREDENTIAL_WARNING,
   getCredentialStatus,
@@ -28,16 +28,16 @@ export interface UnscopedRecoveryResult {
 const FAILURE = 'Recovery did not complete. The earlier credential is still unconfirmed.'
 
 export async function discardEarlierCredential(profileId: string): Promise<boolean> {
-  const res = await fetch(apiUrl(`/api/credentials/${encodeURIComponent(profileId)}/discard-unscoped`), {
-    method: 'POST',
-  })
-  if (!res.ok) return false
-  const data = await res.json()
-  return data.discarded === true && data.unbound_profile_credential === false
-}
-
-function otherProvider(provider: ModelProvider): ModelProvider {
-  return provider === 'openai' ? 'anthropic' : 'openai'
+  try {
+    const res = await apiFetch(`/api/credentials/${encodeURIComponent(profileId)}/discard-unscoped`, {
+      method: 'POST',
+    })
+    if (!res.ok) return false
+    const data = await res.json()
+    return data.discarded === true && data.unbound_profile_credential === false
+  } catch {
+    return false
+  }
 }
 
 function rejectedBody(text: string): boolean {
@@ -66,7 +66,7 @@ export async function confirmUnscopedRecovery(input: {
   }
   let posted: CredentialStatus
   try {
-    const res = await fetch(apiUrl(`/api/credentials/${encodeURIComponent(input.profileId)}/rebind`), {
+    const res = await apiFetch(`/api/credentials/${encodeURIComponent(input.profileId)}/rebind`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ provider: input.provider }),
@@ -80,6 +80,18 @@ export async function confirmUnscopedRecovery(input: {
       return { ok: false, reason: 'response-rejected', status: before, message: FAILURE }
     }
     posted = parsed as CredentialStatus
+    const record = parsed as Record<string, unknown>
+    if (record.other_profile_same_secret === true) {
+      return { ok: false, reason: 'other-provider', status: before, message: FAILURE }
+    }
+    if (record.rebound !== true) {
+      return {
+        ok: false,
+        reason: record.unbound_profile_credential === true ? 'still-unbound' : 'not-profile',
+        status: record.unbound_profile_credential === true ? posted : before,
+        message: FAILURE,
+      }
+    }
   } catch {
     return { ok: false, reason: 'request-failed', status: before, message: FAILURE }
   }
@@ -92,10 +104,8 @@ export async function confirmUnscopedRecovery(input: {
     }
   }
   let chosen: CredentialStatus
-  let other: CredentialStatus
   try {
     chosen = await getCredentialStatus(input.profileId, input.provider)
-    other = await getCredentialStatus(input.profileId, otherProvider(input.provider))
   } catch {
     return { ok: false, reason: 'request-failed', status: before, message: FAILURE }
   }
@@ -106,9 +116,6 @@ export async function confirmUnscopedRecovery(input: {
       status: chosen.unbound_profile_credential ? chosen : before,
       message: FAILURE,
     }
-  }
-  if (other.source === 'profile' && other.has_key && other.hint === chosen.hint) {
-    return { ok: false, reason: 'other-provider', status: chosen, message: FAILURE }
   }
   return { ok: true, reason: null, status: chosen, message: 'The earlier credential is now saved for this provider.' }
 }

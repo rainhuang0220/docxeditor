@@ -26,7 +26,10 @@ def export_docx(html_content: str, filename: str = "document.docx") -> str:
 
     output_dir = os.path.join(os.path.expanduser("~"), "Documents", "DocxEditor")
     os.makedirs(output_dir, exist_ok=True)
-    filepath = os.path.join(output_dir, filename)
+    safe_name = os.path.basename(filename.replace("\\", "/")).replace("\x00", "").strip()
+    if not safe_name or safe_name in {".", ".."}:
+        safe_name = "document.docx"
+    filepath = os.path.join(output_dir, safe_name)
     doc.save(filepath)
     return filepath
 

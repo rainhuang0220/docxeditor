@@ -15,7 +15,7 @@ import { FocusMode } from './FocusMode'
 import { TableOfContents } from './TableOfContents'
 import { PageSettingsDialog } from './PageSettingsDialog'
 import { InsertTableDialog } from './InsertTableDialog'
-import { apiUrl } from '../utils/api'
+import { apiFetch } from '../utils/api'
 import { showToast } from './Toast'
 import { usePersistence } from '../persistence/PersistenceContext'
 
@@ -74,7 +74,7 @@ export function Toolbar() {
       const html = editor.getHTML()
       const filename = `${documentTitle.replace(/[^a-zA-Z0-9\u4e00-\u9fff_-]/g, '_')}.docx`
       const pageSettings = getPageSettings()
-      fetch(apiUrl('/api/export/download'), {
+      apiFetch('/api/export/download', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ html_content: html, filename, page_settings: pageSettings }),
@@ -123,7 +123,7 @@ export function Toolbar() {
     const formData = new FormData()
     formData.append('file', file)
     try {
-      const res = await fetch(apiUrl('/api/import'), { method: 'POST', body: formData })
+      const res = await apiFetch('/api/import', { method: 'POST', body: formData })
       const data = await res.json()
       if (data.html) {
         const result = await replaceCurrentDocument(data.html, 'Before import')
@@ -390,7 +390,7 @@ export function Toolbar() {
         const filename = `${documentTitle.replace(/[^a-zA-Z0-9\u4e00-\u9fff_-]/g, '_')}.docx`
         const pageSettings = getPageSettings()
         try {
-          const res = await fetch(apiUrl('/api/export/download'), {
+          const res = await apiFetch('/api/export/download', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ html_content: html, filename, page_settings: pageSettings }),

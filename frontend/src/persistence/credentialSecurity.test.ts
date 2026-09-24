@@ -264,6 +264,6 @@ test('frontend sources no longer post secrets to /api/config', () => {
   const csp = JSON.stringify(tauri.app.security.csp)
   assert.equal(tauri.app.security.csp === null, false)
   assert.equal(csp.includes('*'), false)
-  assert.equal(csp.includes('http://127.0.0.1:8000'), true)
+  assert.equal(csp.includes('http://127.0.0.1:8000'), false)
   assert.equal(csp.includes('fonts.googleapis.com'), false)
 })

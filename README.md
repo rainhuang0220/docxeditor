@@ -60,7 +60,7 @@ atomic ProseMirror transaction
 Accept / Reject when confirmation is required
 ```
 
-Tauri is the native window and packager. It can spawn `uvicorn` for development; it is not a self-contained Python sidecar.
+Tauri owns a bundled Python sidecar. The desktop app does not use a system Python or anything already listening on port 8000. Browser development is a separate, explicit insecure mode.
 
 ```mermaid
 flowchart TD

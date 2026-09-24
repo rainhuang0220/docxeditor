@@ -10,6 +10,9 @@ DocxEditor.app/
 target/
 zips_aeye-website-template/
 src-tauri/target/
+src-tauri/binaries/
+build/
+packaging/*.spec
 withgpt/
 withgpt.zip
 
