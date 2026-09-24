@@ -398,7 +398,13 @@ mod tests {
     }
 
     fn alive(pid: u32) -> bool {
-        unsafe { libc::kill(pid as i32, 0) == 0 }
+        if unsafe { libc::kill(pid as i32, 0) } != 0 {
+            return false;
+        }
+        let output = Command::new("ps").args(["-o", "stat=", "-p", &pid.to_string()]).output();
+        let text = output.ok().and_then(|output| String::from_utf8(output.stdout).ok()).unwrap_or_default();
+        let stat = text.trim();
+        !stat.is_empty() && !stat.starts_with('Z')
     }
 
     #[test]

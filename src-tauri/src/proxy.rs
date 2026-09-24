@@ -212,7 +212,9 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let marker = dir.join("drip.txt");
         let token = [9u8; 32];
-        let mut child = Command::new("python3")
+        let venv_python = root.join("build/sidecar-venv/bin/python3");
+        let python = if venv_python.is_file() { venv_python } else { std::path::PathBuf::from("python3") };
+        let mut child = Command::new(python)
             .args(["-m", "backend.desktop_runtime"])
             .current_dir(root)
             .env("DOCXEDITOR_KEYRING", "disabled")
