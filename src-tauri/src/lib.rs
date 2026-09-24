@@ -1,16 +1,15 @@
+mod inflight;
 mod proxy;
 mod supervisor;
 
-use std::collections::HashMap;
 use std::sync::Mutex;
 
 use base64::Engine;
 use tauri::{Manager, RunEvent, State};
-use tokio::sync::watch;
 
 struct AppState {
     session: supervisor::SharedSession,
-    inflight: Mutex<HashMap<String, watch::Sender<bool>>>,
+    inflight: Mutex<inflight::Inflight>,
 }
 
 fn state_json(session: &supervisor::Session) -> serde_json::Value {
@@ -30,12 +29,10 @@ fn backend_status(state: State<AppState>) -> serde_json::Value {
 
 #[tauri::command]
 fn backend_retry(state: State<AppState>) -> Result<serde_json::Value, String> {
-    let mut guard = state.session.lock().map_err(|_| "The backend is unavailable.".to_string())?;
-    supervisor::stop(&mut guard);
-    let result = supervisor::start(&mut guard);
-    let body = state_json(&guard);
-    result?;
-    Ok(body)
+    supervisor::stop(&state.session);
+    supervisor::start(&state.session)?;
+    let guard = state.session.lock().map_err(|_| "The backend is unavailable.".to_string())?;
+    Ok(state_json(&guard))
 }
 
 #[tauri::command]
@@ -82,25 +79,25 @@ async fn api_stream(
     body: String,
     channel: tauri::ipc::Channel<String>,
 ) -> Result<(), String> {
-    let (sender, receiver) = watch::channel(false);
-    state
-        .inflight
-        .lock()
-        .map_err(|_| "The backend is unavailable.".to_string())?
-        .insert(request_id.clone(), sender);
+    let receiver = {
+        let mut inflight = state.inflight.lock().map_err(|_| "The backend is unavailable.".to_string())?;
+        match inflight.register(&request_id) {
+            inflight::Registration::Ready(receiver) => receiver,
+            inflight::Registration::Cancelled => return Err("The request was cancelled.".to_string()),
+            inflight::Registration::Duplicate => return Err("The request is already active.".to_string()),
+        }
+    };
     let result = proxy::stream(&state.session, request_id.clone(), path, body, channel, receiver).await;
     if let Ok(mut inflight) = state.inflight.lock() {
-        inflight.remove(&request_id);
+        inflight.finish(&request_id);
     }
     result
 }
 
 #[tauri::command]
 fn api_cancel(state: State<AppState>, request_id: String) {
-    if let Ok(inflight) = state.inflight.lock() {
-        if let Some(sender) = inflight.get(&request_id) {
-            let _ = sender.send(true);
-        }
+    if let Ok(mut inflight) = state.inflight.lock() {
+        inflight.cancel(&request_id);
     }
 }
 
@@ -109,16 +106,14 @@ pub fn run() {
     tauri::Builder::default()
         .manage(AppState {
             session: Mutex::new(supervisor::Session::new()),
-            inflight: Mutex::new(HashMap::new()),
+            inflight: Mutex::new(inflight::Inflight::new()),
         })
         .setup(|app| {
             let handle = app.handle().clone();
             let watch = handle.clone();
             std::thread::spawn(move || {
                 if let Some(state) = handle.try_state::<AppState>() {
-                    if let Ok(mut guard) = state.session.lock() {
-                        let _ = supervisor::start(&mut guard);
-                    }
+                    let _ = supervisor::start(&state.session);
                 }
             });
             std::thread::spawn(move || loop {
@@ -141,9 +136,7 @@ pub fn run() {
         .run(|app, event| {
             if matches!(event, RunEvent::Exit) {
                 if let Some(state) = app.try_state::<AppState>() {
-                    if let Ok(mut guard) = state.session.lock() {
-                        supervisor::stop(&mut guard);
-                    }
+                    supervisor::stop(&state.session);
                 }
             }
         });

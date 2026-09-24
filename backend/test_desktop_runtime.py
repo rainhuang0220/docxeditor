@@ -340,6 +340,61 @@ def test_packaged_binary_if_present(tmp: Path):
         backend.close()
 
 
+def test_lifespan_gates_ready(tmp: Path):
+    tmp.mkdir(parents=True, exist_ok=True)
+    marker = tmp / "life.txt"
+    failed = start_expect_exit(tmp / "fail", {"DOCXEDITOR_LIFESPAN_FAIL": "1", "DOCXEDITOR_LIFESPAN_MARKER": str(marker)})
+    assert failed.returncode != 0
+    assert b"READY" not in failed.stdout
+    assert TOKEN.hex().encode() not in failed.stdout
+    assert marker.read_text() == "start"
+
+    begun = time.monotonic()
+    marker.write_text("")
+    backend = start(tmp / "slow", extra={"DOCXEDITOR_LIFESPAN_DELAY_MS": "400", "DOCXEDITOR_LIFESPAN_MARKER": str(marker)})
+    try:
+        assert time.monotonic() - begun >= 0.35
+        assert marker.read_text() == "started"
+        status, _headers, body = backend.request("GET", "/api/health", token=backend.token)
+        assert status == 200
+        assert json.loads(body)["status"] == "ok"
+        status, _headers, _body = backend.request("GET", "/api/health")
+        assert status == 401
+    finally:
+        backend.close()
+
+
+def start_expect_exit(tmp: Path, extra: dict) -> subprocess.CompletedProcess:
+    tmp.mkdir(parents=True, exist_ok=True)
+    env = os.environ.copy()
+    env.pop("DOCXEDITOR_DEV_INSECURE", None)
+    for name in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_BASE_URL", "ANTHROPIC_BASE_URL"):
+        env.pop(name, None)
+    env["DOCXEDITOR_KEYRING"] = "disabled"
+    env["DOCXEDITOR_CONFIG_PATH"] = str(tmp / "config.json")
+    env["DOCXEDITOR_TEST_HOOKS"] = "1"
+    env.update(extra)
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "backend.desktop_runtime"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=env,
+        cwd=ROOT,
+    )
+    assert proc.stdin and proc.stdout and proc.stderr
+    proc.stdin.write(f"v1 {TOKEN.hex()}\n".encode("ascii"))
+    proc.stdin.flush()
+    line = _readline(proc.stdout, 6)
+    code = proc.poll()
+    if code is None:
+        proc.kill()
+        proc.wait(timeout=3)
+        code = proc.returncode
+    stderr = proc.stderr.read() if proc.stderr else b""
+    return subprocess.CompletedProcess(proc.args, code, line or b"", stderr)
+
+
 def test_capabilities_and_csp():
     capabilities = json.loads((ROOT / "src-tauri" / "capabilities" / "default.json").read_text())
     text = json.dumps(capabilities)
@@ -360,6 +415,7 @@ def main():
         test_restart_and_second_instance(root / "b")
         test_stream_and_documents(root / "c")
         test_parent_exit_stops_the_child(root / "d")
+        test_lifespan_gates_ready(root / "life")
         test_packaged_binary_if_present(root / "e")
     print("PASS: desktop runtime")
 

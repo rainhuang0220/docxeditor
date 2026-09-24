@@ -45,9 +45,20 @@ async function fileFromBody(body: BodyInit | null | undefined): Promise<{ name: 
   return { name: file.name || 'document.docx', base64: bytesToBase64(bytes) }
 }
 
+export function desktopRequestAllowed(signal: AbortSignal | null | undefined): boolean {
+  return !signal?.aborted
+}
+
+function abortError(): DOMException {
+  return new DOMException('The operation was aborted.', 'AbortError')
+}
+
 async function tauriRequest(path: string, init?: RequestInit): Promise<Response> {
+  if (!desktopRequestAllowed(init?.signal)) throw abortError()
   const { invoke } = await import('@tauri-apps/api/core')
+  if (!desktopRequestAllowed(init?.signal)) throw abortError()
   const file = await fileFromBody(init?.body)
+  if (!desktopRequestAllowed(init?.signal)) throw abortError()
   const result = await invoke<InvokeResult>('api_request', {
     method: init?.method || 'GET',
     path,
@@ -62,10 +73,18 @@ async function tauriRequest(path: string, init?: RequestInit): Promise<Response>
   })
 }
 
-async function tauriStream(path: string, init?: RequestInit): Promise<Response> {
-  const { invoke, Channel } = await import('@tauri-apps/api/core')
+export type DesktopInvoke = <T>(command: string, args: Record<string, unknown>) => Promise<T>
+
+export async function openDesktopStream(
+  path: string,
+  init: RequestInit | undefined,
+  invoke: DesktopInvoke,
+  createChannel: () => { onmessage: ((raw: string) => void) | null },
+): Promise<Response> {
+  if (!desktopRequestAllowed(init?.signal)) throw abortError()
   const requestId = crypto.randomUUID()
-  const channel = new Channel<string>()
+  const channel = createChannel()
+  if (!desktopRequestAllowed(init?.signal)) throw abortError()
   const queue: Uint8Array[] = []
   let waiter: ((chunk: Uint8Array | null) => void) | null = null
   let finished = false
@@ -97,24 +116,44 @@ async function tauriStream(path: string, init?: RequestInit): Promise<Response> 
       return
     }
     if (message.kind === 'chunk' && message.data) push(encoder.encode(message.data))
-    if (message.kind === 'end' || message.kind === 'error') {
+    if (message.kind === 'error') {
+      finished = true
+      push(null)
+      return
+    }
+    if (message.kind === 'end') {
       finished = true
       push(null)
     }
   }
+  const signal = init?.signal
   const cancel = () => { void invoke('api_cancel', { requestId }) }
-  init?.signal?.addEventListener('abort', cancel, { once: true })
+  if (!desktopRequestAllowed(signal)) throw abortError()
+  signal?.addEventListener('abort', cancel, { once: true })
+  if (!desktopRequestAllowed(signal)) {
+    signal?.removeEventListener('abort', cancel)
+    throw abortError()
+  }
+  let failed = false
   const pending = invoke('api_stream', {
     requestId,
     path,
     body: typeof init?.body === 'string' ? init.body : '',
     channel,
   }).catch(() => {
+    failed = true
     finished = true
     opened()
     push(null)
+  }).finally(() => {
+    signal?.removeEventListener('abort', cancel)
   })
+  if (!desktopRequestAllowed(signal)) {
+    cancel()
+    throw abortError()
+  }
   await ready
+  if (!desktopRequestAllowed(signal) || (failed && signal?.aborted)) throw abortError()
   const stream = new ReadableStream<Uint8Array>({
     pull(controller) {
       if (queue.length > 0) {
@@ -138,7 +177,15 @@ async function tauriStream(path: string, init?: RequestInit): Promise<Response> 
     },
   })
   void pending
+  if (signal?.aborted) throw abortError()
   return new Response(stream, { status, headers: { 'content-type': contentType } })
+}
+
+async function tauriStream(path: string, init?: RequestInit): Promise<Response> {
+  if (!desktopRequestAllowed(init?.signal)) throw abortError()
+  const { invoke, Channel } = await import('@tauri-apps/api/core')
+  if (!desktopRequestAllowed(init?.signal)) throw abortError()
+  return openDesktopStream(path, init, invoke, () => new Channel<string>())
 }
 
 export async function apiFetch(path: string, init?: RequestInit): Promise<Response> {

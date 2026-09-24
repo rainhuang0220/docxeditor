@@ -102,9 +102,6 @@ def _serve(port: int, token: bytes | None) -> None:
         raise SystemExit(2) from None
     sock.listen(128)
     chosen = sock.getsockname()[1]
-    if token is not None:
-        sys.stdout.write(format_ready(token, chosen))
-        sys.stdout.flush()
     os.environ.pop("WEB_CONCURRENCY", None)
     config = uvicorn.Config(
         app,
@@ -114,7 +111,18 @@ def _serve(port: int, token: bytes | None) -> None:
         log_level="warning",
         lifespan="on",
     )
-    uvicorn.Server(config).run()
+    class ReadyServer(uvicorn.Server):
+        async def startup(self, sockets=None):  # type: ignore[override]
+            await super().startup(sockets)
+            if self.started and token is not None:
+                sys.stdout.write(format_ready(token, chosen))
+                sys.stdout.flush()
+
+    server = ReadyServer(config)
+    server.run()
+    if not server.started:
+        sys.stderr.write("The backend did not finish starting.\n")
+        raise SystemExit(1)
 
 
 def serve_secure(token: bytes) -> None:

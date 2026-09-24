@@ -183,6 +183,20 @@ async def _lifespan(app: FastAPI):
             stacklevel=2,
         )
         app.state.legacy_migration = None
+    if os.environ.get("DOCXEDITOR_TEST_HOOKS") == "1" and not getattr(sys, "frozen", False):
+        import time
+        from pathlib import Path
+
+        marker = os.environ.get("DOCXEDITOR_LIFESPAN_MARKER")
+        if marker:
+            Path(marker).write_text("start", encoding="utf-8")
+        if os.environ.get("DOCXEDITOR_LIFESPAN_FAIL") == "1":
+            raise RuntimeError("injected startup failure")
+        delay = os.environ.get("DOCXEDITOR_LIFESPAN_DELAY_MS")
+        if delay:
+            time.sleep(int(delay) / 1000)
+        if marker:
+            Path(marker).write_text("started", encoding="utf-8")
     yield
 
 
