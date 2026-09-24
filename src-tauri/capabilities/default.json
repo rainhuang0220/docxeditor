@@ -6,7 +6,9 @@
   "permissions": [
     "core:default",
     "allow-api-request",
+    "allow-api-stream-reserve",
     "allow-api-stream",
+    "allow-api-stream-release",
     "allow-api-cancel",
     "allow-backend-status",
     "allow-backend-retry"

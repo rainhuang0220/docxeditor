@@ -71,33 +71,66 @@ async fn api_request(
     }))
 }
 
+struct FinishStream<'a> {
+    inflight: &'a Mutex<inflight::Inflight>,
+    id: String,
+    owner: String,
+}
+
+impl Drop for FinishStream<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut inflight) = self.inflight.lock() {
+            inflight.finish(&self.id, &self.owner);
+        }
+    }
+}
+
+#[tauri::command]
+fn api_stream_reserve(state: State<AppState>, request_id: String, owner: String) -> Result<(), String> {
+    let mut inflight = state.inflight.lock().map_err(|_| "The backend is unavailable.".to_string())?;
+    match inflight.reserve(&request_id, &owner) {
+        inflight::Reserve::Reserved => Ok(()),
+        inflight::Reserve::Duplicate => Err("The request is already active.".to_string()),
+    }
+}
+
+#[tauri::command]
+fn api_stream_release(state: State<AppState>, request_id: String, owner: String) -> Result<(), String> {
+    let mut inflight = state.inflight.lock().map_err(|_| "The backend is unavailable.".to_string())?;
+    inflight.release(&request_id, &owner);
+    Ok(())
+}
+
 #[tauri::command]
 async fn api_stream(
     state: State<'_, AppState>,
     request_id: String,
+    owner: String,
     path: String,
     body: String,
     channel: tauri::ipc::Channel<String>,
 ) -> Result<(), String> {
     let receiver = {
         let mut inflight = state.inflight.lock().map_err(|_| "The backend is unavailable.".to_string())?;
-        match inflight.register(&request_id) {
-            inflight::Registration::Ready(receiver) => receiver,
-            inflight::Registration::Cancelled => return Err("The request was cancelled.".to_string()),
-            inflight::Registration::Duplicate => return Err("The request is already active.".to_string()),
+        match inflight.start(&request_id, &owner) {
+            inflight::Start::Ready(receiver) => receiver,
+            inflight::Start::Cancelled => return Err("The request was cancelled.".to_string()),
+            inflight::Start::Duplicate => return Err("The request is already active.".to_string()),
+            inflight::Start::NotReserved => return Err("The request was not reserved.".to_string()),
         }
     };
-    let result = proxy::stream(&state.session, request_id.clone(), path, body, channel, receiver).await;
-    if let Ok(mut inflight) = state.inflight.lock() {
-        inflight.finish(&request_id);
-    }
-    result
+    let _finish = FinishStream {
+        inflight: &state.inflight,
+        id: request_id.clone(),
+        owner,
+    };
+    proxy::stream(&state.session, request_id, path, body, channel, receiver).await
 }
 
 #[tauri::command]
-fn api_cancel(state: State<AppState>, request_id: String) {
+fn api_cancel(state: State<AppState>, request_id: String, owner: String) {
     if let Ok(mut inflight) = state.inflight.lock() {
-        inflight.cancel(&request_id);
+        inflight.cancel(&request_id, &owner);
     }
 }
 
@@ -128,7 +161,9 @@ pub fn run() {
             backend_status,
             backend_retry,
             api_request,
+            api_stream_reserve,
             api_stream,
+            api_stream_release,
             api_cancel
         ])
         .build(tauri::generate_context!())

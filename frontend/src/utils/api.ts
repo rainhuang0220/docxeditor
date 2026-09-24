@@ -81,10 +81,12 @@ export async function openDesktopStream(
   invoke: DesktopInvoke,
   createChannel: () => { onmessage: ((raw: string) => void) | null },
 ): Promise<Response> {
-  if (!desktopRequestAllowed(init?.signal)) throw abortError()
+  const signal = init?.signal
+  if (!desktopRequestAllowed(signal)) throw abortError()
   const requestId = crypto.randomUUID()
+  const owner = crypto.randomUUID()
   const channel = createChannel()
-  if (!desktopRequestAllowed(init?.signal)) throw abortError()
+  if (!desktopRequestAllowed(signal)) throw abortError()
   const queue: Uint8Array[] = []
   let waiter: ((chunk: Uint8Array | null) => void) | null = null
   let finished = false
@@ -102,6 +104,29 @@ export async function openDesktopStream(
     }
     if (chunk) queue.push(chunk)
   }
+  let streamInvoked = false
+  let settled = false
+  let cancelTask: Promise<void> | null = null
+  const cancelOwned = () => {
+    if (settled) return Promise.resolve()
+    if (cancelTask) return cancelTask
+    const releaseToo = !streamInvoked
+    cancelTask = (async () => {
+      try { await invoke('api_cancel', { requestId, owner }) } catch { /* absent cancel is a no-op */ }
+      if (releaseToo) {
+        try { await invoke('api_stream_release', { requestId, owner }) } catch { /* reservation already gone */ }
+      }
+    })()
+    return cancelTask
+  }
+  const stopListening = () => { signal?.removeEventListener('abort', onAbort) }
+  const markFinished = () => {
+    settled = true
+    stopListening()
+  }
+  const onAbort = () => {
+    if (!settled && streamInvoked) void cancelOwned()
+  }
   channel.onmessage = (raw) => {
     let message: { kind?: string; status?: number; contentType?: string; data?: string }
     try {
@@ -116,44 +141,86 @@ export async function openDesktopStream(
       return
     }
     if (message.kind === 'chunk' && message.data) push(encoder.encode(message.data))
-    if (message.kind === 'error') {
+    if (message.kind === 'error' || message.kind === 'end') {
       finished = true
-      push(null)
-      return
-    }
-    if (message.kind === 'end') {
-      finished = true
+      markFinished()
       push(null)
     }
   }
-  const signal = init?.signal
-  const cancel = () => { void invoke('api_cancel', { requestId }) }
-  if (!desktopRequestAllowed(signal)) throw abortError()
-  signal?.addEventListener('abort', cancel, { once: true })
+  await invoke('api_stream_reserve', { requestId, owner })
   if (!desktopRequestAllowed(signal)) {
-    signal?.removeEventListener('abort', cancel)
+    await cancelOwned()
+    throw abortError()
+  }
+  signal?.addEventListener('abort', onAbort)
+  if (!desktopRequestAllowed(signal)) {
+    stopListening()
+    await cancelOwned()
+    throw abortError()
+  }
+  streamInvoked = true
+  if (!desktopRequestAllowed(signal)) {
+    streamInvoked = false
+    stopListening()
+    await cancelOwned()
     throw abortError()
   }
   let failed = false
-  const pending = invoke('api_stream', {
-    requestId,
-    path,
-    body: typeof init?.body === 'string' ? init.body : '',
-    channel,
-  }).catch(() => {
-    failed = true
-    finished = true
-    opened()
-    push(null)
-  }).finally(() => {
-    signal?.removeEventListener('abort', cancel)
-  })
+  let pending: Promise<unknown>
+  try {
+    pending = invoke('api_stream', {
+      requestId,
+      owner,
+      path,
+      body: typeof init?.body === 'string' ? init.body : '',
+      channel,
+    }).catch(() => {
+      failed = true
+      finished = true
+      opened()
+      push(null)
+      // Active work stays owned by its start token. This only clears a
+      // reservation that never became a stream.
+      void invoke('api_stream_release', { requestId, owner }).catch(() => undefined)
+    }).finally(() => {
+      markFinished()
+    })
+  } catch (error) {
+    streamInvoked = false
+    stopListening()
+    await cancelOwned()
+    throw error
+  }
   if (!desktopRequestAllowed(signal)) {
-    cancel()
+    await cancelOwned()
+    stopListening()
     throw abortError()
   }
-  await ready
-  if (!desktopRequestAllowed(signal) || (failed && signal?.aborted)) throw abortError()
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const fail = () => reject(abortError())
+      if (signal?.aborted) {
+        fail()
+        return
+      }
+      signal?.addEventListener('abort', fail, { once: true })
+      void ready.then(() => {
+        signal?.removeEventListener('abort', fail)
+        if (signal?.aborted) fail()
+        else resolve()
+      })
+    })
+  } catch (error) {
+    await cancelOwned()
+    stopListening()
+    throw error
+  }
+  if (failed && signal?.aborted) {
+    await cancelOwned()
+    stopListening()
+    throw abortError()
+  }
+  let releasePull: (() => void) | null = null
   const stream = new ReadableStream<Uint8Array>({
     pull(controller) {
       if (queue.length > 0) {
@@ -165,7 +232,12 @@ export async function openDesktopStream(
         return
       }
       return new Promise(resolve => {
+        releasePull = () => {
+          releasePull = null
+          resolve()
+        }
         waiter = (chunk) => {
+          releasePull = null
           if (chunk) controller.enqueue(chunk)
           else controller.close()
           resolve()
@@ -173,11 +245,20 @@ export async function openDesktopStream(
       })
     },
     cancel() {
-      cancel()
+      finished = true
+      waiter = null
+      const release = releasePull
+      releasePull = null
+      release?.()
+      return cancelOwned()
     },
   })
   void pending
-  if (signal?.aborted) throw abortError()
+  if (signal?.aborted) {
+    await cancelOwned()
+    stopListening()
+    throw abortError()
+  }
   return new Response(stream, { status, headers: { 'content-type': contentType } })
 }
 
