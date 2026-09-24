@@ -391,10 +391,11 @@ def _expand_list(list_type: str, html: str, expanded: list, level: int = 0, star
         # Use depth-aware extraction to remove nested <ul>/<ol> blocks
         item_text_html = _strip_nested_lists(li_content)
         align_match = re.search(r'text-align:\s*(left|center|right|justify)', item_text_html)
+        item_text_html = re.sub(r'</p>\s*<p[^>]*>', '<br>', item_text_html)
         item_text_html = re.sub(r'</?p[^>]*>', '', item_text_html)
         text = re.sub(r'<[^>]+>', '', item_text_html)
         runs = _parse_runs(item_text_html)
-        if text.strip() or runs:
+        if True:
             expanded.append({
                 "tag": "li",
                 "list_type": list_type,
@@ -419,7 +420,10 @@ def _expand_list(list_type: str, html: str, expanded: list, level: int = 0, star
             nested_content_result = _extract_tag_content(li_content, nested_tag, content_begin)
             if nested_content_result:
                 nested_inner, nested_end = nested_content_result
-                if nested_tag == list_type:
+                same_list = nested_tag == list_type and (
+                    nested_tag == "ul" or _ol_type(nested_attrs) == ol_type
+                ) and _list_start(nested_attrs) == (start or 1)
+                if same_list:
                     nested_group = group
                 else:
                     box[0] += 1
@@ -446,37 +450,38 @@ def _parse_runs(html: str) -> list:
     # Split on inline formatting tags (including img)
     segments = re.split(r'(<(?:strong|b|em|i|u|s|del|mark|span|a|br|sup|sub|img)[^>]*>|</(?:strong|b|em|i|u|s|del|mark|span|a|sup|sub)>)', html)
 
-    bold = False
-    italic = False
-    underline = False
-    strikethrough = False
+    bold = 0
+    italic = 0
+    underline = 0
+    strikethrough = 0
     highlight = None
     font_family = None
     font_size = None
     color = None
-    superscript = False
-    subscript = False
+    span_stack: list[tuple] = []
+    superscript = 0
+    subscript = 0
     link_href = None
 
     for seg in segments:
         if not seg:
             continue
         if seg in ('<strong>', '<b>'):
-            bold = True
+            bold += 1
         elif seg in ('</strong>', '</b>'):
-            bold = False
+            bold = max(0, bold - 1)
         elif seg in ('<em>', '<i>'):
-            italic = True
+            italic += 1
         elif seg in ('</em>', '</i>'):
-            italic = False
+            italic = max(0, italic - 1)
         elif seg == '<u>':
-            underline = True
+            underline += 1
         elif seg == '</u>':
-            underline = False
+            underline = max(0, underline - 1)
         elif seg in ('<s>', '<del>'):
-            strikethrough = True
+            strikethrough += 1
         elif seg in ('</s>', '</del>'):
-            strikethrough = False
+            strikethrough = max(0, strikethrough - 1)
         elif seg.startswith('<mark'):
             highlight = "#ffff00"
             style_match = re.search(r'data-color="([^"]*)"', seg)
@@ -491,14 +496,15 @@ def _parse_runs(html: str) -> list:
         elif seg == '</a>':
             link_href = None
         elif seg == '<sup>':
-            superscript = True
+            superscript += 1
         elif seg == '</sup>':
-            superscript = False
+            superscript = max(0, superscript - 1)
         elif seg == '<sub>':
-            subscript = True
+            subscript += 1
         elif seg == '</sub>':
-            subscript = False
+            subscript = max(0, subscript - 1)
         elif seg.startswith('<span'):
+            span_stack.append((font_family, font_size, color))
             style_match = re.search(r'style="([^"]*)"', seg)
             if style_match:
                 style = style_match.group(1)
@@ -511,11 +517,9 @@ def _parse_runs(html: str) -> list:
                 cm = re.search(r'color:\s*(#[0-9a-fA-F]{6})', style)
                 if cm:
                     color = cm.group(1)
-        elif seg == '</span>':
-            font_family = None
-            font_size = None
-            color = None
-        elif seg == '<br>' or seg == '<br/>':
+        elif seg == '</span>' and span_stack:
+            font_family, font_size, color = span_stack.pop()
+        elif seg.startswith('<br'):
             runs.append({"text": "\n"})
         elif seg.startswith('<img'):
             src_match = re.search(r'src="([^"]*)"', seg)
@@ -578,8 +582,17 @@ def _add_block(doc: Document, block: dict):
         if block.get("num_id"):
             _set_num_pr(p, int(block["num_id"]), int(block.get("level") or 0))
     elif tag == "blockquote":
-        p = doc.add_paragraph(style='Quote')
-        _add_runs_to_paragraph(p, block.get("runs", [{"text": block["text"]}]))
+        inner = _parse_html_sequential(block.get("raw_content") or "")
+        pieces = inner or [block]
+        _assign_list_numbering(doc, pieces)
+        for piece in pieces:
+            if piece.get("tag") == "table":
+                _add_table_from_html(doc, piece)
+                continue
+            p = doc.add_paragraph(style='Quote')
+            _add_runs_to_paragraph(p, piece.get("runs") or [])
+            if piece.get("tag") == "li" and piece.get("num_id"):
+                _set_num_pr(p, int(piece["num_id"]), int(piece.get("level") or 0))
     elif tag == "table":
         _add_table_from_html(doc, block)
     elif tag == "img":
@@ -627,7 +640,8 @@ def _add_block(doc: Document, block: dict):
                 run.font.name = block["font_family"]
         if block.get("font_size"):
             for run in p.runs:
-                run.font.size = Pt(block["font_size"])
+                if run.font.size is None:
+                    run.font.size = Pt(block["font_size"])
 
     # Apply alignment
     if tag != "table" and block.get("align"):
@@ -714,13 +728,18 @@ def _add_table_from_html(doc: Document, block: dict):
             self._row = None
             self._cell = None
             self._parts: list[str] = []
+            self._nest = 0
 
         def handle_starttag(self, tag, attrs):
             attr = {key.lower(): value for key, value in attrs}
-            if tag == "tr" and self._cell is None:
+            if tag == "table" and self._cell is not None:
+                self._nest += 1
+                self._parts.append(self.get_starttag_text() or "")
+                return
+            if tag == "tr" and self._cell is None and self._nest == 0:
                 self._row = []
                 return
-            if tag in {"td", "th"} and self._row is not None and self._cell is None:
+            if tag in {"td", "th"} and self._row is not None and self._cell is None and self._nest == 0:
                 self._cell = {
                     "header": tag == "th",
                     "colspan": _span_attr(attr.get("colspan")),
@@ -733,12 +752,16 @@ def _add_table_from_html(doc: Document, block: dict):
                 self._parts.append(self.get_starttag_text() or "")
 
         def handle_endtag(self, tag):
-            if tag in {"td", "th"} and self._cell is not None:
+            if tag == "table" and self._nest:
+                self._nest -= 1
+                self._parts.append("</table>")
+                return
+            if tag in {"td", "th"} and self._cell is not None and self._nest == 0:
                 self._cell["html"] = "".join(self._parts)
                 self._row.append(self._cell)
                 self._cell = None
                 return
-            if tag == "tr" and self._row is not None and self._cell is None:
+            if tag == "tr" and self._row is not None and self._cell is None and self._nest == 0:
                 # A fully spanned row is empty. Dropping it deletes the rowspan.
                 self.rows.append(self._row)
                 self._row = None
@@ -846,6 +869,10 @@ def _add_hyperlink(paragraph, text: str, url: str, run_data: dict):
         rPr.append(OxmlElement('w:b'))
     if run_data.get("italic"):
         rPr.append(OxmlElement('w:i'))
+    if run_data.get("font_size"):
+        size = OxmlElement("w:sz")
+        size.set(qn("w:val"), str(int(round(float(run_data["font_size"]) * 2))))
+        rPr.append(size)
 
     new_run.append(rPr)
 
@@ -876,7 +903,7 @@ def _span_attr(value: str | None) -> int:
         parsed = int(value or "1")
     except ValueError:
         return 1
-    return parsed if parsed > 0 else 1
+    return parsed if 0 < parsed <= 63 else 1
 
 
 def _background_attr(attrs: dict) -> str | None:

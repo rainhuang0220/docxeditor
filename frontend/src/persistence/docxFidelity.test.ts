@@ -36,6 +36,23 @@ test('a successful import keeps html, twips, and warnings', () => {
   assert.equal(imported.warnings[0], 'Headers and footers are not imported.')
 })
 
+test('page settings verify even when property order differs', async () => {
+  await resetPersistence()
+  const letter = {
+    marginBottomTwip: 1080,
+    widthTwip: 12240,
+    marginRightTwip: 1800,
+    heightTwip: 15840,
+    marginLeftTwip: 1440,
+    marginTopTwip: 720,
+  }
+  const saved = await saveCurrentDocument('<p>Letter</p>', '2026-09-24T00:02:00.000Z', letter)
+  assert.equal(saved.pageSettings?.widthTwip, 12240)
+  const loaded = await loadCurrentDocument()
+  assert.equal(loaded.status, 'ok')
+  if (loaded.status === 'ok') assert.equal(loaded.record.pageSettings?.marginTopTwip, 720)
+})
+
 test('page settings stay with the document record across an html save', async () => {
   await resetPersistence()
   const letter = { ...DEFAULT_PAGE_SETTINGS, widthTwip: 12240, heightTwip: 15840 }

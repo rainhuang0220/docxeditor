@@ -71,10 +71,13 @@ def import_docx(content: bytes) -> ImportResult:
     page_settings = _page_settings(doc, ctx)
     html_parts: list[str] = []
     list_buffer: list[tuple] = []
+    emitted: dict[str, int] = {}
 
     def flush() -> None:
         nonlocal list_buffer
         if list_buffer:
+            for item in list_buffer:
+                emitted[item[3]] = emitted.get(item[3], 0) + 1
             html_parts.append(_build_nested_list(list_buffer))
             list_buffer = []
 
@@ -87,11 +90,13 @@ def import_docx(content: bytes) -> ImportResult:
             para = Paragraph(element, doc)
             info = _get_list_info(para, ctx)
             if info:
-                if list_buffer and list_buffer[0][3] != info[2]:
-                    flush()
                 kind, level, num_id, start, ol_type = info
+                if list_buffer and num_id != list_buffer[-1][3] and level <= list_buffer[-1][1]:
+                    flush()
                 if level > 0 and not any(item[1] < level for item in list_buffer):
                     ctx.warn("A nested list item had no parent item in that list, so its level was flattened.")
+                if not any(item[3] == num_id for item in list_buffer):
+                    start += emitted.get(num_id, 0)
                 blocks = _paragraph_blocks(para, ctx, as_list=True)
                 list_buffer.append((kind, level, "".join(blocks), num_id, start, ol_type))
             else:
@@ -300,8 +305,18 @@ def _inline_segments(parent, part, ctx: _Ctx) -> list[tuple[str, str]]:
             segments.extend(_hyperlink_segments(child, part, ctx))
         elif tag == "r":
             segments.extend(_run_segments(child, part, ctx))
-        elif tag in {"ins", "smartTag", "sdt"}:
-            segments.extend(_inline_segments(child, part, ctx))
+        elif tag in {"ins", "smartTag", "sdt", "AlternateContent"}:
+            target = child
+            if tag == "sdt":
+                target = child.find(qn("w:sdtContent")) or child
+            elif tag == "AlternateContent":
+                target = (
+                    child.find("{http://schemas.openxmlformats.org/markup-compatibility/2006}Choice")
+                    or child.find("{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback")
+                    or child
+                )
+            if target is not None:
+                segments.extend(_inline_segments(target, part, ctx))
     return segments
 
 
@@ -310,6 +325,8 @@ def _hyperlink_segments(element, part, ctx: _Ctx) -> list[tuple[str, str]]:
     for child in element:
         if _local(child) == "r":
             inner.extend(_run_segments(child, part, ctx))
+        else:
+            inner.extend(_inline_segments(child, part, ctx))
     href = _safe_href(_get_hyperlink_url(element, part), ctx)
     segments: list[tuple[str, str]] = []
     buf: list[str] = []
@@ -455,7 +472,9 @@ def _get_list_info(para: Paragraph, ctx: _Ctx) -> tuple[str, int, str, int, str 
     if num_pr is not None:
         num_id_el = num_pr.find(qn("w:numId"))
         num_id = num_id_el.get(qn("w:val")) if num_id_el is not None else None
-        if num_id and num_id != "0":
+        if num_id == "0":
+            return None
+        if num_id:
             level = _int_attr(num_pr.find(qn("w:ilvl")), "w:val") or 0
             kind, ol_type, start = _numbering_format(para, num_id, level, ctx)
             if kind is None:
@@ -527,10 +546,8 @@ def _numbering_format(para: Paragraph, num_id: str, level: int, ctx: _Ctx) -> tu
 def _build_nested_list(items: list[tuple]) -> str:
     if not items:
         return ""
-    if all(item[1] == 0 for item in items):
-        return _list_tag(items[0]) + "".join(f"<li>{item[2]}</li>" for item in items) + _list_close(items[0])
     result: list[str] = []
-    _build_list_recursive(items, 0, 0, result)
+    _build_list_recursive(items, 0, min(item[1] for item in items), result)
     return "".join(result)
 
 
@@ -550,31 +567,23 @@ def _list_close(item: tuple) -> str:
     return "</ul>" if item[0] == "ul" else "</ol>"
 
 
-def _build_list_recursive(items: list[tuple], start: int, base_level: int, output: list[str]) -> None:
-    if start >= len(items):
-        return
+def _build_list_recursive(items: list[tuple], start: int, base_level: int, output: list[str]) -> int:
+    """Append one list and return the first index that does not belong to it."""
+    if start >= len(items) or items[start][1] < base_level:
+        return start
     output.append(_list_tag(items[start]))
     index = start
-    while index < len(items):
-        item = items[index]
-        level = item[1]
-        if level < base_level:
-            break
-        if level > base_level:
-            output.append(f"<li>{item[2]}</li>")
-            index += 1
+    while index < len(items) and items[index][1] >= base_level:
+        if items[index][1] > base_level:
+            index = _build_list_recursive(items, index, items[index][1], output)
             continue
-        nested = index + 1 < len(items) and items[index + 1][1] > base_level
-        if nested:
-            output.append(f"<li>{item[2]}")
-            _build_list_recursive(items, index + 1, items[index + 1][1], output)
-            while index + 1 < len(items) and items[index + 1][1] > base_level:
-                index += 1
-            output.append("</li>")
-        else:
-            output.append(f"<li>{item[2]}</li>")
+        output.append(f"<li>{items[index][2]}")
         index += 1
+        while index < len(items) and items[index][1] > base_level:
+            index = _build_list_recursive(items, index, items[index][1], output)
+        output.append("</li>")
     output.append(_list_close(items[start]))
+    return index
 
 
 def _table_to_html(table: Table, ctx: _Ctx) -> str:
@@ -623,7 +632,7 @@ def _tc_span(tc) -> tuple[int, str | None]:
         return colspan, merge
     grid = tc_pr.find(qn("w:gridSpan"))
     if grid is not None and _int_attr(grid, "w:val"):
-        colspan = _int_attr(grid, "w:val") or 1
+        colspan = min(_int_attr(grid, "w:val") or 1, 63)
     vmerge = tc_pr.find(qn("w:vMerge"))
     if vmerge is not None:
         val = vmerge.get(qn("w:val"))

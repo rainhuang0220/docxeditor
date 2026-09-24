@@ -46,7 +46,7 @@ Browser `npm run dev` can still talk to `python3 -m backend.desktop_runtime --de
 | Bullet lists and decimal, letter, or roman lists, including nesting and a start value | Supported. A nested item with no parent item in that list is flattened and reported as a warning |
 | Tables, colspan, rowspan, formatted cell text, images and links in cells, hex cell shading | Supported. Merged cells are not repeated |
 | Page breaks | Supported |
-| First section page size and margins | Supported and stored with the document |
+| First section page size and margins | Supported and stored with the document. Restoring an older version resets the page to A4, because versions store HTML only |
 | H4 and below | Kept as H3, with a warning |
 | Headers, footers, and page-number fields | Not imported or exported. The on-page header and footer boxes are editor chrome, not Word sections |
 | Later sections with a different page setup | Not supported. The first section is kept and a warning is shown |

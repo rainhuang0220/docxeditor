@@ -22,6 +22,17 @@ export async function loadCurrentDocument(): Promise<LoadCurrentResult> {
   }
 }
 
+function samePageSettings(left?: PageSettingsRecord | null, right?: PageSettingsRecord | null): boolean {
+  if (!left && !right) return true
+  if (!left || !right) return false
+  return left.widthTwip === right.widthTwip
+    && left.heightTwip === right.heightTwip
+    && left.marginTopTwip === right.marginTopTwip
+    && left.marginRightTwip === right.marginRightTwip
+    && left.marginBottomTwip === right.marginBottomTwip
+    && left.marginLeftTwip === right.marginLeftTwip
+}
+
 export async function saveCurrentDocument(
   html: string,
   savedAt: string = new Date().toISOString(),
@@ -51,7 +62,7 @@ export async function saveCurrentDocument(
     readback.status !== 'ok'
     || readback.record.html !== html
     || readback.record.savedAt !== savedAt
-    || JSON.stringify(savedSettings ?? null) !== JSON.stringify(stored ?? null)
+    || !samePageSettings(savedSettings, stored)
   ) {
     throw new PersistenceError('write', 'Document save could not be verified.')
   }

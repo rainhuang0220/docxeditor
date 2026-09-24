@@ -569,6 +569,41 @@ def test_spanned_row_hostile_package_and_textbox():
     print("PASS: spanned row, hostile package, text box")
 
 
+def test_list_items_are_not_dropped_or_restarted():
+    doc = Document()
+    _add_list(doc, ["Top"], "decimal", 90, 91)
+    for text, level in (("Deep", 2), ("Mid", 1)):
+        para = doc.add_paragraph(text)
+        p_pr = para._p.get_or_add_pPr()
+        num_pr = OxmlElement("w:numPr")
+        ilvl = OxmlElement("w:ilvl")
+        ilvl.set(qn("w:val"), str(level))
+        nid = OxmlElement("w:numId")
+        nid.set(qn("w:val"), "90")
+        num_pr.extend([ilvl, nid])
+        p_pr.append(num_pr)
+    html = import_docx(_bytes(doc)).html
+    assert "Top" in html and "Deep" in html and "Mid" in html
+    assert html.index("Top") < html.index("Deep") < html.index("Mid")
+
+    doc = Document()
+    _add_list(doc, ["First", "Second"], "decimal", 92, 93)
+    doc.add_paragraph("between")
+    para = doc.add_paragraph("Third")
+    p_pr = para._p.get_or_add_pPr()
+    num_pr = OxmlElement("w:numPr")
+    ilvl = OxmlElement("w:ilvl")
+    ilvl.set(qn("w:val"), "0")
+    nid = OxmlElement("w:numId")
+    nid.set(qn("w:val"), "92")
+    num_pr.extend([ilvl, nid])
+    p_pr.append(num_pr)
+    html = import_docx(_bytes(doc)).html
+    assert 'start="3"' in html
+    assert html.index("Second") < html.index("between") < html.index("Third")
+    print("PASS: list items stay and numbering continues")
+
+
 def main():
     test_paragraphs_headings_and_marks()
     test_image_order_and_link()
@@ -581,6 +616,7 @@ def main():
     test_font_size_header_shading_and_list_in_cell()
     test_review_fixtures()
     test_spanned_row_hostile_package_and_textbox()
+    test_list_items_are_not_dropped_or_restarted()
     print("ALL FIDELITY TESTS PASSED")
 
 
