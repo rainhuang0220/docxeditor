@@ -739,8 +739,8 @@ def _add_table_from_html(doc: Document, block: dict):
                 self._cell = None
                 return
             if tag == "tr" and self._row is not None and self._cell is None:
-                if self._row:
-                    self.rows.append(self._row)
+                # A fully spanned row is empty. Dropping it deletes the rowspan.
+                self.rows.append(self._row)
                 self._row = None
                 return
             if self._cell is not None:

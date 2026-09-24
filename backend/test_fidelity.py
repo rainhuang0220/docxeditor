@@ -406,6 +406,169 @@ def test_font_size_header_shading_and_list_in_cell():
     print("PASS: font size, header shading, cell list, zero margin")
 
 
+def test_review_fixtures():
+    # Several images, image-then-text, and bold text on both sides.
+    doc = Document()
+    para = doc.add_paragraph()
+    para.add_run("AAA").bold = True
+    para.add_run().add_picture(io.BytesIO(PNG))
+    para.add_run().add_picture(io.BytesIO(PNG))
+    para.add_run("BBB").bold = True
+    imported, out = _roundtrip(doc)
+    assert imported.html.index("AAA") < imported.html.index("data:image") < imported.html.rindex("data:image") < imported.html.index("BBB")
+    assert "<strong>AAA</strong>" in imported.html and "<strong>BBB</strong>" in imported.html
+    drawings = out.element.body.findall(".//" + qn("w:drawing"))
+    assert len(drawings) == 2
+    joined = "".join(para.text for para in out.paragraphs)
+    assert joined.index("AAA") < joined.index("BBB")
+
+    image_first = Document()
+    run = image_first.add_paragraph().add_run()
+    run.add_picture(io.BytesIO(PNG))
+    run.add_text("TAIL")
+    imported = import_docx(_bytes(image_first))
+    assert imported.html.index("data:image") < imported.html.index("TAIL")
+
+    # Empty cell, CJK, symbol, body shading, two paragraphs, and a 2x2 merge.
+    doc = Document()
+    table = doc.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = "汉字"
+    table.cell(0, 1).text = ""
+    table.cell(1, 0).text = "Ω"
+    shade = OxmlElement("w:shd")
+    shade.set(qn("w:val"), "clear")
+    shade.set(qn("w:fill"), "00AA00")
+    table.cell(1, 1)._tc.get_or_add_tcPr().append(shade)
+    table.cell(1, 1).text = "green"
+    imported = import_docx(_bytes(doc))
+    assert imported.html.count("汉字") == 1 and "Ω" in imported.html and "00AA00" in imported.html
+    assert imported.html.count("<td") == 4
+    cell = Document().add_table(rows=1, cols=1).cell(0, 0)
+    # rebuild with paragraphs
+    doc = Document()
+    cell = doc.add_table(rows=1, cols=1).cell(0, 0)
+    cell.paragraphs[0].text = "P1"
+    cell.add_paragraph("P2")
+    _, out = _roundtrip(doc)
+    assert [para.text for para in out.tables[0].cell(0, 0).paragraphs] == ["P1", "P2"]
+
+    doc = Document()
+    merged = doc.add_table(rows=3, cols=3)
+    merged.cell(0, 0).merge(merged.cell(1, 1))
+    merged.cell(0, 0).text = "BLOCK"
+    merged.cell(0, 2).text = "R"
+    merged.cell(2, 0).text = "Bot"
+    imported, out = _roundtrip(doc)
+    assert imported.html.count("BLOCK") == 1 and 'colspan="2"' in imported.html and 'rowspan="2"' in imported.html
+    assert sum(cell["text"].count("BLOCK") for cell in _physical_cells(out.tables[0])) == 1
+
+    # Two independent decimal lists, a bold link, and a parentless nested item.
+    doc = Document()
+    _add_list(doc, ["A1", "A2"], "decimal", 70, 80)
+    doc.add_paragraph("gap")
+    _add_list(doc, ["B1"], "decimal", 71, 81)
+    imported = import_docx(_bytes(doc))
+    assert imported.html.count("<ol") == 2
+    assert imported.html.index("A1") < imported.html.index("gap") < imported.html.index("B1")
+
+    doc = Document()
+    paragraph = doc.add_paragraph()
+    _add_link(paragraph, "Go", "https://example.com/z")
+    link_run = paragraph._p.find(qn("w:hyperlink")).find(qn("w:r"))
+    rpr = OxmlElement("w:rPr")
+    rpr.append(OxmlElement("w:b"))
+    link_run.insert(0, rpr)
+    fonts = OxmlElement("w:rFonts")
+    fonts.set(qn("w:ascii"), "url(http://evil.example/a.woff)")
+    fonts.set(qn("w:eastAsia"), "宋体")
+    rpr.append(fonts)
+    imported = import_docx(_bytes(doc))
+    assert 'href="https://example.com/z"' in imported.html and "<strong>Go</strong>" in imported.html
+    assert "url(" not in imported.html and "宋体" in imported.html
+
+    doc = Document()
+    _add_list(doc, ["OnlyDeep"], "decimal", 72, 82)
+    ilvl = doc.paragraphs[-1]._p.find(qn("w:pPr")).find(qn("w:numPr")).find(qn("w:ilvl"))
+    ilvl.set(qn("w:val"), "1")
+    imported = import_docx(_bytes(doc))
+    assert "<ol><li><p>OnlyDeep</p></li></ol>" in imported.html.replace("\n", "")
+    assert any("flattened" in warning for warning in imported.warnings)
+
+    # Letter margins survive export.
+    doc = Document()
+    section = doc.sections[0]
+    section.page_width = Inches(8.5)
+    section.page_height = Inches(11)
+    section.left_margin = Inches(1)
+    section.right_margin = Inches(1.25)
+    section.top_margin = Inches(0.5)
+    section.bottom_margin = Inches(0.75)
+    doc.add_paragraph("Letter")
+    imported, out = _roundtrip(doc)
+    assert imported.page_settings["widthTwip"] == 12240
+    assert int(out.sections[0].top_margin.twips) == 720
+    assert int(out.sections[0].right_margin.twips) == 1800
+    assert int(out.sections[0].bottom_margin.twips) == 1080
+    assert int(out.sections[0].left_margin.twips) == 1440
+    print("PASS: review fixtures")
+
+
+def test_spanned_row_hostile_package_and_textbox():
+    doc = Document()
+    table = doc.add_table(rows=2, cols=2)
+    table.cell(0, 0).merge(table.cell(1, 1))
+    table.cell(0, 0).text = "ONLY"
+    imported, out = _roundtrip(doc)
+    assert 'rowspan="2"' in imported.html and imported.html.count("ONLY") == 1
+    cells = _physical_cells(out.tables[0])
+    assert any(cell["grid"] == 2 and cell["merge"] == "restart" and cell["text"] == "ONLY" for cell in cells)
+    assert any(cell["merge"] == "continue" and cell["text"] == "" for cell in cells)
+    assert sum(cell["text"].count("ONLY") for cell in cells) == 1
+
+    bad = io.BytesIO()
+    with zipfile.ZipFile(bad, "w") as archive:
+        archive.writestr("word/document.xml", b'<!DOCTYPE w:document [<!ENTITY x "SECRET">]><w:document/>')
+    try:
+        import_docx(bad.getvalue())
+        raise AssertionError("DTD package was accepted")
+    except DocxImportError:
+        pass
+
+    broken = io.BytesIO()
+    with zipfile.ZipFile(broken, "w") as archive:
+        archive.writestr("[Content_Types].xml", b"<Types></Types>")
+        archive.writestr("word/document.xml", b"<document xmlns='urn:example:not-ooxml'/>")
+    try:
+        import_docx(broken.getvalue())
+        raise AssertionError("unreadable package was accepted")
+    except DocxImportError:
+        pass
+
+    doc = Document()
+    doc.add_paragraph("Keep")
+    from lxml import etree
+    run = OxmlElement("w:r")
+    run.append(etree.fromstring(
+        '<w:pict xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+        'xmlns:v="urn:schemas-microsoft-com:vml"><v:textbox><w:txbxContent><w:p><w:r><w:t>INBOX</w:t></w:r></w:p>'
+        '</w:txbxContent></v:textbox></w:pict>'
+    ))
+    doc.paragraphs[0]._p.append(run)
+    imported = import_docx(_bytes(doc))
+    assert "Keep" in imported.html and "INBOX" not in imported.html
+    assert any("not imported" in warning for warning in imported.warnings)
+
+    doc = Document()
+    paragraph = doc.add_paragraph("star ")
+    sym = OxmlElement("w:r")
+    sym.append(OxmlElement("w:sym"))
+    paragraph._p.append(sym)
+    imported = import_docx(_bytes(doc))
+    assert "star" in imported.html
+    assert any("Symbol-font" in warning for warning in imported.warnings)
+    print("PASS: spanned row, hostile package, text box")
+
+
 def main():
     test_paragraphs_headings_and_marks()
     test_image_order_and_link()
@@ -416,6 +579,8 @@ def main():
     test_import_endpoint_hides_failures()
     test_spaces_between_marks_and_header_warning()
     test_font_size_header_shading_and_list_in_cell()
+    test_review_fixtures()
+    test_spanned_row_hostile_package_and_textbox()
     print("ALL FIDELITY TESTS PASSED")
 
 

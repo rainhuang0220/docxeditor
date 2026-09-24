@@ -25,6 +25,7 @@ MAX_MEMBER_BYTES = 8 * 1024 * 1024
 MAX_ZIP_MEMBERS = 128
 MAX_IMAGE_BYTES = 2 * 1024 * 1024
 _IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
+_VML_IMAGEDATA = "{urn:schemas-microsoft-com:vml}imagedata"
 _OL_TYPE = {
     "decimal": None,
     "decimalZero": None,
@@ -60,6 +61,10 @@ def import_docx(content: bytes) -> ImportResult:
     _reject_hostile_package(content)
     try:
         doc = Document(io.BytesIO(content))
+        if getattr(doc.element, "body", None) is None:
+            raise DocxImportError("The document could not be opened.")
+    except DocxImportError:
+        raise
     except Exception as exc:
         raise DocxImportError("The document could not be opened.") from exc
     ctx = _Ctx()
@@ -84,8 +89,10 @@ def import_docx(content: bytes) -> ImportResult:
             if info:
                 if list_buffer and list_buffer[0][3] != info[2]:
                     flush()
-                blocks = _paragraph_blocks(para, ctx, as_list=True)
                 kind, level, num_id, start, ol_type = info
+                if level > 0 and not any(item[1] < level for item in list_buffer):
+                    ctx.warn("A nested list item had no parent item in that list, so its level was flattened.")
+                blocks = _paragraph_blocks(para, ctx, as_list=True)
                 list_buffer.append((kind, level, "".join(blocks), num_id, start, ol_type))
             else:
                 flush()
@@ -112,6 +119,11 @@ def _reject_hostile_package(content: bytes) -> None:
             raise DocxImportError("The document could not be opened.")
         if info.compress_size and info.file_size / info.compress_size > 100:
             raise DocxImportError("The document could not be opened.")
+        name = info.filename.lower()
+        if name.endswith((".xml", ".rels")):
+            payload = archive.read(info)
+            if b"<!DOCTYPE" in payload or b"<!ENTITY" in payload:
+                raise DocxImportError("The document could not be opened.")
 
 
 def _local(element) -> str:
@@ -155,7 +167,8 @@ def _safe_font(name: str | None) -> str | None:
     cleaned = name.strip()
     if not cleaned or len(cleaned) > 80:
         return None
-    if any(ch in cleaned for ch in '<>"\';{}\\'):
+    # One font name, not a CSS value. Parentheses would allow url().
+    if re.fullmatch(r"[\w .+-]+", cleaned, flags=re.UNICODE) is None:
         return None
     return cleaned
 
@@ -220,7 +233,8 @@ def _int_attr(element, name: str) -> int | None:
 def _paragraph_blocks(para: Paragraph, ctx: _Ctx, *, as_list: bool) -> list[str]:
     segments = _inline_segments(para._element, para.part, ctx)
     if not segments:
-        return [] if as_list else ["<p></p>"]
+        # A list item must start with a paragraph or TipTap hoists the nested list.
+        return ["<p></p>"]
     blocks: list[str] = []
     text_buf: list[str] = []
 
@@ -331,6 +345,10 @@ def _run_segments(run, part, ctx: _Ctx) -> list[tuple[str, str]]:
             image = _image_html(child, part, ctx)
             if image:
                 segments.append(("img", image))
+            elif tag == "pict":
+                ctx.warn("Text boxes and legacy drawings are not imported.")
+        elif tag == "sym":
+            ctx.warn("Symbol-font characters are not imported.")
         elif tag == "t" and child.text:
             segments.append(("text", _format_text(child.text, rpr)))
         elif tag == "br":
@@ -364,7 +382,11 @@ def _format_text(text: str, rpr) -> str:
     if rpr is not None:
         fonts = rpr.find(qn("w:rFonts"))
         if fonts is not None:
-            family = _safe_font(fonts.get(qn("w:ascii")) or fonts.get(qn("w:hAnsi")) or fonts.get(qn("w:eastAsia")))
+            family = None
+            for key in ("w:ascii", "w:hAnsi", "w:eastAsia"):
+                family = _safe_font(fonts.get(qn(key)))
+                if family:
+                    break
             if family:
                 styles.append(f"font-family: {_escape_html(family)}")
         size = rpr.find(qn("w:sz"))
@@ -397,7 +419,7 @@ def _image_magic(blob: bytes, content_type: str) -> bool:
 def _image_html(element, part, ctx: _Ctx) -> str | None:
     blips = element.findall(f'.//{qn("a:blip")}')
     if not blips:
-        blips = element.findall(f'.//{qn("v:imagedata")}')
+        blips = element.findall(f".//{_VML_IMAGEDATA}")
     for blip in blips:
         embed_id = blip.get(qn("r:embed")) or blip.get(qn("r:id"))
         if not embed_id:
@@ -638,6 +660,8 @@ def _cell_html(tc, table: Table, ctx: _Ctx) -> str:
                 if list_buffer and list_buffer[0][3] != info[2]:
                     flush()
                 kind, level, num_id, start, ol_type = info
+                if level > 0 and not any(item[1] < level for item in list_buffer):
+                    ctx.warn("A nested list item had no parent item in that list, so its level was flattened.")
                 list_buffer.append((kind, level, "".join(_paragraph_blocks(para, ctx, as_list=True)), num_id, start, ol_type))
             else:
                 flush()
