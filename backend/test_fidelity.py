@@ -152,6 +152,25 @@ def test_lists_restart_and_type():
     assert 'type="a"' in letter_html
     letter_out = Document(io.BytesIO(export_docx_to_bytes(letter_html)))
     assert "lowerLetter" in _resolved_formats(letter_out)
+    nested = Document()
+    _add_list(nested, ["Parent"], "decimal", num_id=14, abstract_id=24)
+    child = nested.add_paragraph("Child")
+    p_pr = child._p.get_or_add_pPr()
+    num_pr = OxmlElement("w:numPr")
+    ilvl = OxmlElement("w:ilvl")
+    ilvl.set(qn("w:val"), "1")
+    nid = OxmlElement("w:numId")
+    nid.set(qn("w:val"), "14")
+    num_pr.extend([ilvl, nid])
+    p_pr.append(num_pr)
+    nested_html = import_docx(_bytes(nested)).html
+    assert nested_html.index("Parent") < nested_html.index("Child")
+    assert nested_html.count("<ol") >= 2
+    roman = Document()
+    _add_list(roman, ["Eye"], "lowerRoman", num_id=15, abstract_id=25)
+    roman_html = import_docx(_bytes(roman)).html
+    assert 'type="i"' in roman_html
+    assert "lowerRoman" in _resolved_formats(Document(io.BytesIO(export_docx_to_bytes(roman_html))))
     print("PASS: list restart and bullet")
 
 

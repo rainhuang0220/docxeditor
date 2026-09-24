@@ -478,15 +478,17 @@ def _numbering_format(para: Paragraph, num_id: str, level: int, ctx: _Ctx) -> tu
         for abstract in numbering.findall(qn("w:abstractNum")):
             if abstract.get(qn("w:abstractNumId")) != abstract_id:
                 continue
-            for lvl in abstract.findall(qn("w:lvl")):
-                if lvl.get(qn("w:ilvl")) != str(level):
-                    continue
+            levels = {node.get(qn("w:ilvl")): node for node in abstract.findall(qn("w:lvl"))}
+            exact = levels.get(str(level))
+            lvl = exact if exact is not None else levels.get("0")
+            if lvl is not None:
                 fmt_el = lvl.find(qn("w:numFmt"))
                 fmt = fmt_el.get(qn("w:val")) if fmt_el is not None else "bullet"
-                start_el = lvl.find(qn("w:start"))
-                if start_el is not None and _int_attr(start_el, "w:val"):
-                    start = _int_attr(start_el, "w:val") or 1
-                break
+                if exact is not None:
+                    start_el = lvl.find(qn("w:start"))
+                    if start_el is not None and _int_attr(start_el, "w:val"):
+                        start = _int_attr(start_el, "w:val") or 1
+            break
     if start_override:
         start = start_override
     if fmt == "bullet":
