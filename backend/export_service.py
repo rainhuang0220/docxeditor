@@ -858,8 +858,17 @@ def _add_hyperlink(paragraph, text: str, url: str, run_data: dict):
 
     # Style as a hyperlink (blue + underline)
     color_el = OxmlElement('w:color')
-    color_el.set(qn('w:val'), '0563C1')
+    custom = str(run_data.get("color") or "").lstrip("#")
+    color_el.set(qn('w:val'), custom.upper() if re.fullmatch(r"[0-9A-Fa-f]{6}", custom) else "0563C1")
     rPr.append(color_el)
+    if run_data.get("superscript"):
+        vert = OxmlElement("w:vertAlign")
+        vert.set(qn("w:val"), "superscript")
+        rPr.append(vert)
+    elif run_data.get("subscript"):
+        vert = OxmlElement("w:vertAlign")
+        vert.set(qn("w:val"), "subscript")
+        rPr.append(vert)
     u_el = OxmlElement('w:u')
     u_el.set(qn('w:val'), 'single')
     rPr.append(u_el)

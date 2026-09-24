@@ -601,6 +601,40 @@ def test_list_items_are_not_dropped_or_restarted():
     html = import_docx(_bytes(doc)).html
     assert 'start="3"' in html
     assert html.index("Second") < html.index("between") < html.index("Third")
+
+    doc = Document()
+    _add_list(doc, ["Parent"], "decimal", 94, 95)
+    child = doc.add_paragraph("Child")
+    p_pr = child._p.get_or_add_pPr()
+    num_pr = OxmlElement("w:numPr")
+    ilvl = OxmlElement("w:ilvl")
+    ilvl.set(qn("w:val"), "1")
+    nid = OxmlElement("w:numId")
+    nid.set(qn("w:val"), "94")
+    num_pr.extend([ilvl, nid])
+    p_pr.append(num_pr)
+    doc.add_paragraph("gap")
+    nxt = doc.add_paragraph("Next")
+    p_pr = nxt._p.get_or_add_pPr()
+    num_pr = OxmlElement("w:numPr")
+    ilvl = OxmlElement("w:ilvl")
+    ilvl.set(qn("w:val"), "0")
+    nid = OxmlElement("w:numId")
+    nid.set(qn("w:val"), "94")
+    num_pr.extend([ilvl, nid])
+    p_pr.append(num_pr)
+    html = import_docx(_bytes(doc)).html
+    assert 'start="2"' in html and 'start="3"' not in html
+
+    encoded = '<!DOCTYPE w:document [<!ENTITY x "SECRET">]>'.encode("utf-16")
+    package = io.BytesIO()
+    with zipfile.ZipFile(package, "w") as archive:
+        archive.writestr("word/document.xml", encoded)
+    try:
+        import_docx(package.getvalue())
+        raise AssertionError("UTF-16 DTD was accepted")
+    except DocxImportError:
+        pass
     print("PASS: list items stay and numbering continues")
 
 

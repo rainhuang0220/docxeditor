@@ -71,13 +71,14 @@ def import_docx(content: bytes) -> ImportResult:
     page_settings = _page_settings(doc, ctx)
     html_parts: list[str] = []
     list_buffer: list[tuple] = []
-    emitted: dict[str, int] = {}
+    emitted: dict[tuple[str, int], int] = {}
 
     def flush() -> None:
         nonlocal list_buffer
         if list_buffer:
             for item in list_buffer:
-                emitted[item[3]] = emitted.get(item[3], 0) + 1
+                key = (item[3], item[1])
+                emitted[key] = emitted.get(key, 0) + 1
             html_parts.append(_build_nested_list(list_buffer))
             list_buffer = []
 
@@ -95,8 +96,8 @@ def import_docx(content: bytes) -> ImportResult:
                     flush()
                 if level > 0 and not any(item[1] < level for item in list_buffer):
                     ctx.warn("A nested list item had no parent item in that list, so its level was flattened.")
-                if not any(item[3] == num_id for item in list_buffer):
-                    start += emitted.get(num_id, 0)
+                if not any(item[3] == num_id and item[1] == level for item in list_buffer):
+                    start += emitted.get((num_id, level), 0)
                 blocks = _paragraph_blocks(para, ctx, as_list=True)
                 list_buffer.append((kind, level, "".join(blocks), num_id, start, ol_type))
             else:
@@ -105,6 +106,16 @@ def import_docx(content: bytes) -> ImportResult:
     flush()
     html = "\n".join(part for part in html_parts if part)
     return ImportResult(html=html, page_settings=page_settings, warnings=ctx.warnings)
+
+
+def _contains_dtd(payload: bytes) -> bool:
+    samples = [payload.upper()]
+    if payload.startswith((b"\xff\xfe", b"\xfe\xff")):
+        try:
+            samples.append(payload.decode("utf-16").encode("utf-8").upper())
+        except UnicodeError:
+            return True
+    return any(b"<!DOCTYPE" in sample or b"<!ENTITY" in sample for sample in samples)
 
 
 def _reject_hostile_package(content: bytes) -> None:
@@ -125,10 +136,8 @@ def _reject_hostile_package(content: bytes) -> None:
         if info.compress_size and info.file_size / info.compress_size > 100:
             raise DocxImportError("The document could not be opened.")
         name = info.filename.lower()
-        if name.endswith((".xml", ".rels")):
-            payload = archive.read(info)
-            if b"<!DOCTYPE" in payload or b"<!ENTITY" in payload:
-                raise DocxImportError("The document could not be opened.")
+        if name.endswith((".xml", ".rels")) and _contains_dtd(archive.read(info)):
+            raise DocxImportError("The document could not be opened.")
 
 
 def _local(element) -> str:
