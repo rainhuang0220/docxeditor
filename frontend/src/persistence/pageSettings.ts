@@ -83,8 +83,10 @@ export function parsePageSettings(input: unknown): PageSettings | null {
   const marginRightTwip = rec.marginRightTwip
   const marginBottomTwip = rec.marginBottomTwip
   const marginLeftTwip = rec.marginLeftTwip
-  const values = [widthTwip, heightTwip, marginTopTwip, marginRightTwip, marginBottomTwip, marginLeftTwip]
-  if (!values.every(value => typeof value === 'number' && Number.isInteger(value) && value > 0 && value < 200000)) return null
+  const positive = [widthTwip, heightTwip]
+  const margins = [marginTopTwip, marginRightTwip, marginBottomTwip, marginLeftTwip]
+  const fits = (value: unknown, allowZero: boolean) => typeof value === 'number' && Number.isInteger(value) && value < 200000 && value >= (allowZero ? 0 : 1)
+  if (!positive.every(value => fits(value, false)) || !margins.every(value => fits(value, true))) return null
   return { widthTwip, heightTwip, marginTopTwip, marginRightTwip, marginBottomTwip, marginLeftTwip } as PageSettings
 }
 

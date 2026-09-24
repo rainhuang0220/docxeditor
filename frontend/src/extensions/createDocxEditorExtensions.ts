@@ -23,25 +23,34 @@ import { ReviewLock } from './ReviewLock.ts'
 import { DocumentRevision } from './DocumentRevision.ts'
 import type { Extensions } from '@tiptap/core'
 
+function backgroundColorAttribute() {
+  return {
+    backgroundColor: {
+      default: null,
+      parseHTML: (element: HTMLElement) => {
+        const raw = element.getAttribute('data-background-color') || element.style.backgroundColor || ''
+        const match = raw.trim().match(/^#?([0-9A-Fa-f]{6})$/)
+        return match ? `#${match[1].toUpperCase()}` : null
+      },
+      renderHTML: (attributes: { backgroundColor?: string | null }) => {
+        const match = String(attributes.backgroundColor || '').match(/^#([0-9A-Fa-f]{6})$/)
+        if (!match) return {}
+        const color = `#${match[1].toUpperCase()}`
+        return { style: `background-color: ${color}`, 'data-background-color': color }
+      },
+    },
+  }
+}
+
 export const CustomTableCell = TableCell.extend({
   addAttributes() {
-    return {
-      ...this.parent?.(),
-      backgroundColor: {
-        default: null,
-        parseHTML: element => {
-          const raw = element.getAttribute('data-background-color') || element.style.backgroundColor || ''
-          const match = raw.trim().match(/^#?([0-9A-Fa-f]{6})$/)
-          return match ? `#${match[1].toUpperCase()}` : null
-        },
-        renderHTML: attributes => {
-          const match = String(attributes.backgroundColor || '').match(/^#([0-9A-Fa-f]{6})$/)
-          if (!match) return {}
-          const color = `#${match[1].toUpperCase()}`
-          return { style: `background-color: ${color}`, 'data-background-color': color }
-        },
-      },
-    }
+    return { ...this.parent?.(), ...backgroundColorAttribute() }
+  },
+})
+
+export const CustomTableHeader = TableHeader.extend({
+  addAttributes() {
+    return { ...this.parent?.(), ...backgroundColorAttribute() }
   },
 })
 
@@ -104,7 +113,7 @@ export function createDocxEditorExtensions(options: CreateDocxEditorExtensionsOp
       Table.configure({ resizable: !headless }),
       TableRow,
       CustomTableCell,
-      TableHeader,
+      CustomTableHeader,
     )
   }
 

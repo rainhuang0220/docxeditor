@@ -94,8 +94,11 @@ def test_paragraphs_headings_and_marks():
     for expected in ("Alpha paragraph", "Heading One", "Heading Two", "Heading Three", "bold", "italic", "underline", "strike", "E=mc2", "Align center", "Align justify"):
         assert expected.replace(" ", "") in text.replace(" ", "") or expected in text, expected
     assert "Heading1" in out.paragraphs[1].style.name.replace(" ", "")
+    assert any(para.text == "Align center" and para.alignment == WD_ALIGN_PARAGRAPH.CENTER for para in out.paragraphs)
     assert out.paragraphs[4].runs[0].bold
     assert out.paragraphs[4].runs[1].italic
+    assert out.paragraphs[4].runs[2].underline
+    assert out.paragraphs[4].runs[3].font.strike
     assert out.paragraphs[5].runs[1].font.superscript
     assert out.paragraphs[5].runs[3].font.subscript
     assert "C0392B" in (out.paragraphs[6].runs[0].font.color.rgb.__str__() if out.paragraphs[6].runs else "")
@@ -373,6 +376,36 @@ def test_spaces_between_marks_and_header_warning():
     print("PASS: spaces and header warning")
 
 
+def test_font_size_header_shading_and_list_in_cell():
+    sized = Document()
+    run = sized.add_paragraph().add_run("Half")
+    run.font.size = Pt(10.5)
+    imported = import_docx(_bytes(sized))
+    assert "10.5pt" in imported.html
+    exported = Document(io.BytesIO(export_docx_to_bytes(imported.html)))
+    assert exported.paragraphs[0].runs[0].font.size.pt == 10.5
+    shaded = '<table><tr><th data-background-color="#00FF00" style="background-color: #00FF00"><p>Head</p></th></tr></table>'
+    shaded_doc = Document(io.BytesIO(export_docx_to_bytes(shaded)))
+    fill = shaded_doc.tables[0].rows[0].cells[0]._tc.tcPr.find(qn("w:shd")).get(qn("w:fill"))
+    assert fill == "00FF00"
+    listed = '<table><tr><td><ul><li><p>Item</p></li></ul></td></tr></table>'
+    listed_doc = Document(io.BytesIO(export_docx_to_bytes(listed)))
+    cell_para = listed_doc.tables[0].rows[0].cells[0].paragraphs[0]
+    assert cell_para._p.find(qn("w:pPr")).find(qn("w:numPr")) is not None
+    zero = {
+        "widthTwip": 12240,
+        "heightTwip": 15840,
+        "marginTopTwip": 0,
+        "marginRightTwip": 1440,
+        "marginBottomTwip": 0,
+        "marginLeftTwip": 1440,
+    }
+    zero_doc = Document(io.BytesIO(export_docx_to_bytes("<p>Edge</p>", zero)))
+    assert int(zero_doc.sections[0].top_margin.twips) == 0
+    assert int(zero_doc.sections[0].page_width.twips) == 12240
+    print("PASS: font size, header shading, cell list, zero margin")
+
+
 def main():
     test_paragraphs_headings_and_marks()
     test_image_order_and_link()
@@ -382,6 +415,7 @@ def main():
     test_unicode_empty_and_hostile_package()
     test_import_endpoint_hides_failures()
     test_spaces_between_marks_and_header_warning()
+    test_font_size_header_shading_and_list_in_cell()
     print("ALL FIDELITY TESTS PASSED")
 
 

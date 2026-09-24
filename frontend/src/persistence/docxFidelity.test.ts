@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createHeadlessEditor } from '../test/headlessEditor.ts'
+import { applyVerifiedReplacement } from './editorReplacement.ts'
 import { loadCurrentDocument, saveCurrentDocument } from './documentStore.ts'
 import { interpretImportResponse } from './importDocx.ts'
 import { cssToTwip, DEFAULT_PAGE_SETTINGS } from './pageSettings.ts'
@@ -48,12 +49,36 @@ test('page settings stay with the document record across an html save', async ()
   assert.equal(loaded.record.pageSettings?.heightTwip, 15840)
 })
 
+test('a trailing list or table still replaces the document', () => {
+  const harness = createHeadlessEditor({ html: '<p>old</p>' })
+  assert.equal(applyVerifiedReplacement(harness.editor, '<ol><li><p>One</p></li></ol>'), true)
+  assert.match(harness.editor.getHTML(), /One/)
+  assert.equal(applyVerifiedReplacement(harness.editor, '<table><tbody><tr><th data-background-color="#00FF00"><p>Head</p></th></tr></tbody></table>'), true)
+  assert.match(harness.editor.getHTML(), /00FF00/)
+  assert.match(harness.editor.getHTML(), /Head/)
+  harness.destroy()
+})
+
 test('css page presets match OOXML twips', () => {
   assert.equal(cssToTwip('210mm'), 11906)
   assert.equal(cssToTwip('297mm'), 16838)
   assert.equal(cssToTwip('8.5in'), 12240)
   assert.equal(cssToTwip('11in'), 15840)
   assert.equal(cssToTwip('25.4mm'), 1440)
+})
+
+test('a zero margin is a real page setting', async () => {
+  const { parsePageSettings } = await import('./pageSettings.ts')
+  const parsed = parsePageSettings({
+    widthTwip: 12240,
+    heightTwip: 15840,
+    marginTopTwip: 0,
+    marginRightTwip: 1440,
+    marginBottomTwip: 0,
+    marginLeftTwip: 1440,
+  })
+  assert.equal(parsed?.marginTopTwip, 0)
+  assert.equal(parsed?.widthTwip, 12240)
 })
 
 test('headless TipTap keeps spans, image order, and list start', () => {

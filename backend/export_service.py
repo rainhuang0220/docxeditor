@@ -292,9 +292,9 @@ def _parse_html_sequential(html: str) -> list:
             block["font_family"] = font_match.group(1).strip().strip("'\"")
 
         # Parse font size from style
-        size_match = re.search(r'font-size:\s*(\d+)pt', attrs)
+        size_match = re.search(r'font-size:\s*(\d+(?:\.\d+)?)pt', attrs)
         if size_match:
-            block["font_size"] = int(size_match.group(1))
+            block["font_size"] = float(size_match.group(1))
 
         blocks.append(block)
 
@@ -505,9 +505,9 @@ def _parse_runs(html: str) -> list:
                 fm = re.search(r'font-family:\s*([^;"]+)', style)
                 if fm:
                     font_family = fm.group(1).strip().strip("'\"")
-                sm = re.search(r'font-size:\s*(\d+)pt', style)
+                sm = re.search(r'font-size:\s*(\d+(?:\.\d+)?)pt', style)
                 if sm:
-                    font_size = int(sm.group(1))
+                    font_size = float(sm.group(1))
                 cm = re.search(r'color:\s*(#[0-9a-fA-F]{6})', style)
                 if cm:
                     color = cm.group(1)
@@ -910,6 +910,7 @@ def _fill_cell(doc: Document, cell, html: str) -> None:
     if not blocks:
         cell.paragraphs[0].clear()
         return
+    _assign_list_numbering(doc, blocks)
     first = True
     for block in blocks:
         if block["tag"] == "table":
@@ -932,6 +933,8 @@ def _fill_cell(doc: Document, cell, html: str) -> None:
             paragraph.add_run().add_break(docx.enum.text.WD_BREAK.PAGE)
         else:
             _add_runs_to_paragraph(paragraph, block.get("runs") or [])
+            if block["tag"] == "li" and block.get("num_id"):
+                _set_num_pr(paragraph, int(block["num_id"]), int(block.get("level") or 0))
         if block.get("align"):
             paragraph.alignment = {
                 "center": WD_ALIGN_PARAGRAPH.CENTER,
