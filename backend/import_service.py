@@ -82,7 +82,7 @@ def import_docx(content: bytes) -> ImportResult:
             html_parts.append(_build_nested_list(list_buffer))
             list_buffer = []
 
-    for element in doc.element.body:
+    for element in _block_children(doc.element.body):
         tag = _local(element)
         if tag == "tbl":
             flush()
@@ -138,6 +138,20 @@ def _reject_hostile_package(content: bytes) -> None:
         name = info.filename.lower()
         if name.endswith((".xml", ".rels")) and _contains_dtd(archive.read(info)):
             raise DocxImportError("The document could not be opened.")
+
+
+def _block_children(element):
+    """Yield paragraphs and tables, unwrapping content controls and insertions."""
+    for child in element:
+        tag = _local(child)
+        if tag == "sdt":
+            content = child.find(qn("w:sdtContent"))
+            if content is not None:
+                yield from _block_children(content)
+        elif tag == "ins":
+            yield from _block_children(child)
+        else:
+            yield child
 
 
 def _local(element) -> str:
@@ -669,7 +683,7 @@ def _cell_html(tc, table: Table, ctx: _Ctx) -> str:
             parts.append(_build_nested_list(list_buffer))
             list_buffer = []
 
-    for child in tc:
+    for child in _block_children(tc):
         tag = _local(child)
         if tag == "p":
             para = Paragraph(child, table)

@@ -635,6 +635,21 @@ def test_list_items_are_not_dropped_or_restarted():
         raise AssertionError("UTF-16 DTD was accepted")
     except DocxImportError:
         pass
+    doc = Document()
+    doc.add_paragraph("Visible")
+    sdt = OxmlElement("w:sdt")
+    content = OxmlElement("w:sdtContent")
+    paragraph = OxmlElement("w:p")
+    run = OxmlElement("w:r")
+    text = OxmlElement("w:t")
+    text.text = "HIDDENBLOCK"
+    run.append(text)
+    paragraph.append(run)
+    content.append(paragraph)
+    sdt.append(content)
+    doc.element.body.append(sdt)
+    html = import_docx(_bytes(doc)).html
+    assert "Visible" in html and "HIDDENBLOCK" in html
     print("PASS: list items stay and numbering continues")
 
 
