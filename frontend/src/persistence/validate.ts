@@ -1,3 +1,4 @@
+import { parsePageSettings } from './pageSettings.ts'
 import {
   CURRENT_DOCUMENT_ID,
   DOCUMENT_SCHEMA_VERSION,
@@ -16,11 +17,13 @@ export function parseCurrentDocument(input: unknown): CurrentDocumentRecord | nu
   if (rec.schemaVersion !== DOCUMENT_SCHEMA_VERSION) return null
   if (typeof rec.html !== 'string') return null
   if (!isIsoTimestamp(rec.savedAt)) return null
+  const pageSettings = parsePageSettings(rec.pageSettings)
   return {
     id: CURRENT_DOCUMENT_ID,
     schemaVersion: DOCUMENT_SCHEMA_VERSION,
     html: rec.html,
     savedAt: rec.savedAt,
+    ...(pageSettings ? { pageSettings } : {}),
   }
 }
 

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Settings, X } from 'lucide-react'
+import { cssToTwip, DEFAULT_PAGE_SETTINGS, getPageSettings, setPageSettings, toPageStyle } from '../persistence/pageSettings'
 
 interface PageSettings {
   width: string
@@ -30,7 +31,18 @@ export function PageSettingsDialog() {
   if (!isOpen) {
     return (
       <button
-        onClick={() => setIsOpen(true)}
+        onClick={() => {
+          const style = toPageStyle(getPageSettings())
+          setSettings({
+            width: style.width,
+            height: style.minHeight,
+            marginTop: style.paddingTop,
+            marginBottom: style.paddingBottom,
+            marginLeft: style.paddingLeft,
+            marginRight: style.paddingRight,
+          })
+          setIsOpen(true)
+        }}
         className="tool-btn w-[30px] h-[30px] grid place-items-center text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-tertiary)] hover:text-[var(--color-text-primary)]"
         title="Page Settings"
       >
@@ -116,16 +128,14 @@ export function PageSettingsDialog() {
           </button>
           <button
             onClick={() => {
-              window.dispatchEvent(new CustomEvent('editor:set-page-style', {
-                detail: {
-                  width: settings.width,
-                  minHeight: settings.height,
-                  paddingTop: settings.marginTop,
-                  paddingBottom: settings.marginBottom,
-                  paddingLeft: settings.marginLeft,
-                  paddingRight: settings.marginRight,
-                },
-              }))
+              setPageSettings({
+                widthTwip: cssToTwip(settings.width) ?? DEFAULT_PAGE_SETTINGS.widthTwip,
+                heightTwip: cssToTwip(settings.height) ?? DEFAULT_PAGE_SETTINGS.heightTwip,
+                marginTopTwip: cssToTwip(settings.marginTop) ?? DEFAULT_PAGE_SETTINGS.marginTopTwip,
+                marginBottomTwip: cssToTwip(settings.marginBottom) ?? DEFAULT_PAGE_SETTINGS.marginBottomTwip,
+                marginLeftTwip: cssToTwip(settings.marginLeft) ?? DEFAULT_PAGE_SETTINGS.marginLeftTwip,
+                marginRightTwip: cssToTwip(settings.marginRight) ?? DEFAULT_PAGE_SETTINGS.marginRightTwip,
+              })
               setIsOpen(false)
             }}
             className="btn btn-primary"

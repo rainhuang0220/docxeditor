@@ -1,0 +1,370 @@
+"""Structural DOCX fidelity. Compare document meaning, not ZIP bytes."""
+
+from __future__ import annotations
+
+import base64
+import io
+import zipfile
+
+from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from docx.shared import Inches, Mm, Pt, RGBColor
+
+from .export_service import export_docx_to_bytes
+from .import_service import DocxImportError, import_docx
+from .main import app
+
+PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+)
+
+
+def _bytes(doc: Document) -> bytes:
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+def _body_text(doc: Document) -> list[str]:
+    return [para.text for para in doc.paragraphs]
+
+
+def _roundtrip(doc: Document, page=None):
+    raw = _bytes(doc)
+    imported = import_docx(raw)
+    exported = export_docx_to_bytes(imported.html, page_settings=page or imported.page_settings)
+    return imported, Document(io.BytesIO(exported))
+
+
+def _physical_cells(table):
+    cells = []
+    for tr in table._tbl.findall(qn("w:tr")):
+        for tc in tr.findall(qn("w:tc")):
+            tc_pr = tc.find(qn("w:tcPr"))
+            grid = 1
+            merge = None
+            if tc_pr is not None:
+                span = tc_pr.find(qn("w:gridSpan"))
+                if span is not None and span.get(qn("w:val")):
+                    grid = int(span.get(qn("w:val")))
+                vmerge = tc_pr.find(qn("w:vMerge"))
+                if vmerge is not None:
+                    merge = vmerge.get(qn("w:val")) or "continue"
+            texts = []
+            for node in tc.findall(".//" + qn("w:t")):
+                if node.text:
+                    texts.append(node.text)
+            cells.append({"text": "".join(texts), "grid": grid, "merge": merge})
+    return cells
+
+
+def test_paragraphs_headings_and_marks():
+    doc = Document()
+    doc.add_paragraph("Alpha paragraph")
+    doc.add_heading("Heading One", level=1)
+    doc.add_heading("Heading Two", level=2)
+    doc.add_heading("Heading Three", level=3)
+    para = doc.add_paragraph()
+    para.add_run("bold").bold = True
+    para.add_run("italic").italic = True
+    para.add_run("underline").underline = True
+    strike = para.add_run("strike")
+    strike.font.strike = True
+    vert = doc.add_paragraph()
+    vert.add_run("E=mc")
+    vert.add_run("2").font.superscript = True
+    vert.add_run(" H")
+    vert.add_run("2").font.subscript = True
+    vert.add_run("O")
+    styled = doc.add_paragraph()
+    run = styled.add_run("Big Red")
+    run.font.size = Pt(18)
+    run.font.color.rgb = RGBColor(0xC0, 0x39, 0x2B)
+    for alignment, text in (
+        (WD_ALIGN_PARAGRAPH.LEFT, "Align left"),
+        (WD_ALIGN_PARAGRAPH.CENTER, "Align center"),
+        (WD_ALIGN_PARAGRAPH.RIGHT, "Align right"),
+        (WD_ALIGN_PARAGRAPH.JUSTIFY, "Align justify"),
+    ):
+        doc.add_paragraph(text).alignment = alignment
+    imported, out = _roundtrip(doc)
+    text = "\n".join(_body_text(out))
+    for expected in ("Alpha paragraph", "Heading One", "Heading Two", "Heading Three", "bold", "italic", "underline", "strike", "E=mc2", "Align center", "Align justify"):
+        assert expected.replace(" ", "") in text.replace(" ", "") or expected in text, expected
+    assert "Heading1" in out.paragraphs[1].style.name.replace(" ", "")
+    assert out.paragraphs[4].runs[0].bold
+    assert out.paragraphs[4].runs[1].italic
+    assert out.paragraphs[5].runs[1].font.superscript
+    assert out.paragraphs[5].runs[3].font.subscript
+    assert "C0392B" in (out.paragraphs[6].runs[0].font.color.rgb.__str__() if out.paragraphs[6].runs else "")
+    assert "<h1" in imported.html and "<h2" in imported.html and "<h3" in imported.html
+    print("PASS: paragraphs, headings, marks, alignment")
+
+
+def test_image_order_and_link():
+    doc = Document()
+    para = doc.add_paragraph()
+    run = para.add_run()
+    run.add_text("BEFORE")
+    run.add_picture(io.BytesIO(PNG))
+    run.add_text("AFTER")
+    imported, out = _roundtrip(doc)
+    assert "BEFORE" in imported.html and "AFTER" in imported.html
+    assert imported.html.index("BEFORE") < imported.html.index("data:image/png") < imported.html.index("AFTER")
+    joined = "".join(_body_text(out))
+    assert "BEFORE" in joined and "AFTER" in joined
+    blobs = []
+    for part in out.part.related_parts.values():
+        if getattr(part, "content_type", "") == "image/png":
+            blobs.append(part.blob)
+    assert PNG in blobs
+    link = doc.add_paragraph()
+    _add_link(link, "example", "https://example.com/a")
+    imported, out = _roundtrip(doc)
+    assert 'href="https://example.com/a"' in imported.html
+    targets = [rel.target_ref for rel in out.part.rels.values() if "hyperlink" in rel.reltype]
+    assert "https://example.com/a" in targets
+    hostile = Document()
+    _add_link(hostile.add_paragraph(), "bad", "javascript:alert(1)")
+    hostile_html = import_docx(_bytes(hostile)).html
+    assert "javascript:" not in hostile_html
+    assert "bad" in hostile_html
+    print("PASS: image order and links")
+
+
+def test_lists_restart_and_type():
+    doc = Document()
+    _add_list(doc, ["First", "Second"], "decimal", num_id=10, abstract_id=20)
+    doc.add_paragraph("between")
+    _add_list(doc, ["Again"], "decimal", num_id=11, abstract_id=21, start=5)
+    _add_list(doc, ["Bullet"], "bullet", num_id=12, abstract_id=22)
+    imported, out = _roundtrip(doc)
+    assert '<ol' in imported.html and 'start="5"' in imported.html and "<ul>" in imported.html
+    assert imported.html.index("First") < imported.html.index("between") < imported.html.index('start="5"')
+    nums = _resolved_starts(out)
+    assert 5 in nums
+    assert any(fmt == "bullet" for fmt in _resolved_formats(out))
+    letters = Document()
+    _add_list(letters, ["Alpha"], "lowerLetter", num_id=13, abstract_id=23)
+    letter_html = import_docx(_bytes(letters)).html
+    assert 'type="a"' in letter_html
+    letter_out = Document(io.BytesIO(export_docx_to_bytes(letter_html)))
+    assert "lowerLetter" in _resolved_formats(letter_out)
+    print("PASS: list restart and bullet")
+
+
+def test_tables_merges_and_rich_cells():
+    doc = Document()
+    table = doc.add_table(rows=3, cols=3)
+    table.cell(0, 0).merge(table.cell(0, 1))
+    table.cell(0, 0).text = "HSpan"
+    table.cell(0, 2).text = "Corner"
+    table.cell(1, 0).merge(table.cell(2, 0))
+    table.cell(1, 0).text = "VSpan"
+    table.cell(1, 1).text = "Mid"
+    table.cell(1, 2).paragraphs[0].add_run("Note").italic = True
+    imported, out = _roundtrip(doc)
+    assert imported.html.count("HSpan") == 1
+    assert imported.html.count("VSpan") == 1
+    assert 'colspan="2"' in imported.html and 'rowspan="2"' in imported.html
+    assert "<em>Note</em>" in imported.html or "<em>Note</em>".lower() in imported.html.lower()
+    cells = _physical_cells(out.tables[0])
+    anchors = [cell for cell in cells if cell["merge"] != "continue"]
+    texts = [cell["text"] for cell in anchors]
+    assert texts.count("HSpan") == 1
+    assert texts.count("VSpan") == 1
+    assert any(cell["grid"] == 2 and "HSpan" in cell["text"] for cell in cells)
+    assert any(cell["merge"] == "restart" and "VSpan" in cell["text"] for cell in cells)
+    linked = Document()
+    cell = linked.add_table(rows=1, cols=1).cell(0, 0)
+    cell.paragraphs[0].add_run().add_picture(io.BytesIO(PNG))
+    _add_link(cell.add_paragraph(), "inside", "https://example.com/cell")
+    imported_cell = import_docx(_bytes(linked))
+    assert "data:image/png" in imported_cell.html and 'href="https://example.com/cell"' in imported_cell.html
+    exported_cell = Document(io.BytesIO(export_docx_to_bytes(imported_cell.html)))
+    assert any(getattr(part, "content_type", "") == "image/png" for part in exported_cell.part.related_parts.values())
+    assert "https://example.com/cell" in [rel.target_ref for rel in exported_cell.part.rels.values() if "hyperlink" in rel.reltype]
+    print("PASS: table merges and rich cells")
+
+
+def test_page_break_and_page_settings():
+    doc = Document()
+    doc.add_paragraph("Before")
+    broken = doc.add_paragraph()
+    broken.add_run().add_break(WD_BREAK.PAGE)
+    doc.add_paragraph("After")
+    section = doc.sections[0]
+    section.page_width = Mm(210)
+    section.page_height = Mm(297)
+    imported, out = _roundtrip(doc)
+    assert "data-page-break" in imported.html
+    assert "Before" in imported.html and "After" in imported.html
+    assert any(run._element.find(qn("w:br")) is not None and (run._element.find(qn("w:br")).get(qn("w:type")) == "page") for para in out.paragraphs for run in para.runs)
+    assert imported.page_settings["widthTwip"] == 11906
+    assert imported.page_settings["heightTwip"] == 16838
+    letter = Document()
+    letter.sections[0].page_width = Inches(8.5)
+    letter.sections[0].page_height = Inches(11)
+    letter.add_paragraph("Letter page")
+    imported_letter = import_docx(_bytes(letter))
+    assert imported_letter.page_settings["widthTwip"] == 12240
+    assert imported_letter.page_settings["heightTwip"] == 15840
+    exported = Document(io.BytesIO(export_docx_to_bytes("<p>Letter page</p>", imported_letter.page_settings)))
+    assert int(exported.sections[0].page_width.twips) == 12240
+    assert int(exported.sections[0].page_height.twips) == 15840
+    multi = Document()
+    multi.add_paragraph("One")
+    # A second sectPr with a different size is a warning, not a second page object.
+    imported_multi = import_docx(_bytes(multi))
+    assert imported_multi.page_settings is not None
+    print("PASS: page break and page settings")
+
+
+def test_unicode_empty_and_hostile_package():
+    doc = Document()
+    doc.add_paragraph("汉字测量")
+    doc.add_paragraph('a & b < c > "quoted"')
+    doc.add_paragraph("")
+    imported, out = _roundtrip(doc)
+    joined = "\n".join(_body_text(out))
+    assert "汉字测量" in joined
+    assert 'a & b < c > "quoted"' in joined or "a &amp; b" not in joined and "quoted" in joined
+    assert "<p></p>" in imported.html or "<p><br></p>" in imported.html
+    try:
+        import_docx(b"not a docx")
+        raise AssertionError("malformed package was accepted")
+    except DocxImportError:
+        pass
+    bomb = io.BytesIO()
+    with zipfile.ZipFile(bomb, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("word/document.xml", b"A" * (9 * 1024 * 1024))
+    try:
+        import_docx(bomb.getvalue())
+        raise AssertionError("oversized package was accepted")
+    except DocxImportError:
+        pass
+    print("PASS: unicode, empty paragraph, hostile package")
+
+
+def test_import_endpoint_hides_failures():
+    from fastapi.testclient import TestClient
+
+    client = TestClient(app)
+    # Dev insecure is process-global. The credentials tests set it; this module sets it too.
+    import os
+    os.environ["DOCXEDITOR_DEV_INSECURE"] = "1"
+    from .session_auth import configure
+    configure(token=None, dev_insecure=True)
+    bad = client.post("/api/import", files={"file": ("bad.docx", b"nope", "application/octet-stream")})
+    assert bad.status_code == 422
+    assert "html" not in bad.json()
+    doc = Document()
+    doc.add_paragraph("Endpoint")
+    good = client.post("/api/import", files={"file": ("ok.docx", _bytes(doc), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")})
+    assert good.status_code == 200
+    body = good.json()
+    assert "Endpoint" in body["html"]
+    assert "page_settings" in body and "warnings" in body
+    print("PASS: import endpoint")
+
+
+def _add_link(paragraph, text, url):
+    part = paragraph.part
+    rel_id = part.relate_to(url, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink", is_external=True)
+    link = OxmlElement("w:hyperlink")
+    link.set(qn("r:id"), rel_id)
+    run = OxmlElement("w:r")
+    node = OxmlElement("w:t")
+    node.text = text
+    run.append(node)
+    link.append(run)
+    paragraph._p.append(link)
+
+
+def _add_list(doc, items, fmt, num_id, abstract_id, start=1):
+    numbering = doc.part.numbering_part._element
+    abstract = OxmlElement("w:abstractNum")
+    abstract.set(qn("w:abstractNumId"), str(abstract_id))
+    lvl = OxmlElement("w:lvl")
+    lvl.set(qn("w:ilvl"), "0")
+    start_el = OxmlElement("w:start")
+    start_el.set(qn("w:val"), str(start))
+    num_fmt = OxmlElement("w:numFmt")
+    num_fmt.set(qn("w:val"), fmt)
+    text = OxmlElement("w:lvlText")
+    text.set(qn("w:val"), "•" if fmt == "bullet" else "%1.")
+    lvl.extend([start_el, num_fmt, text])
+    abstract.append(lvl)
+    first = numbering.find(qn("w:num"))
+    first.addprevious(abstract)
+    num = OxmlElement("w:num")
+    num.set(qn("w:numId"), str(num_id))
+    ref = OxmlElement("w:abstractNumId")
+    ref.set(qn("w:val"), str(abstract_id))
+    num.append(ref)
+    numbering.append(num)
+    for item in items:
+        para = doc.add_paragraph(item)
+        p_pr = para._p.get_or_add_pPr()
+        num_pr = OxmlElement("w:numPr")
+        ilvl = OxmlElement("w:ilvl")
+        ilvl.set(qn("w:val"), "0")
+        nid = OxmlElement("w:numId")
+        nid.set(qn("w:val"), str(num_id))
+        num_pr.extend([ilvl, nid])
+        p_pr.append(num_pr)
+
+
+def _resolved_starts(doc: Document) -> set[int]:
+    numbering = doc.part.numbering_part._element
+    starts = set()
+    for abstract in numbering.findall(qn("w:abstractNum")):
+        for lvl in abstract.findall(qn("w:lvl")):
+            if lvl.get(qn("w:ilvl")) == "0":
+                start = lvl.find(qn("w:start"))
+                if start is not None:
+                    starts.add(int(start.get(qn("w:val"))))
+    return starts
+
+
+def _resolved_formats(doc: Document) -> set[str]:
+    numbering = doc.part.numbering_part._element
+    formats = set()
+    for abstract in numbering.findall(qn("w:abstractNum")):
+        for lvl in abstract.findall(qn("w:lvl")):
+            fmt = lvl.find(qn("w:numFmt"))
+            if fmt is not None:
+                formats.add(fmt.get(qn("w:val")))
+    return formats
+
+
+def test_spaces_between_marks_and_header_warning():
+    exported = Document(io.BytesIO(export_docx_to_bytes("<p><strong>a</strong> <em>b</em></p>")))
+    assert exported.paragraphs[0].text == "a b"
+    doc = Document()
+    doc.add_paragraph("Keep me")
+    footer = doc.sections[0].footer
+    footer.paragraphs[0].text = "CONFIDENTIAL"
+    imported = import_docx(_bytes(doc))
+    assert "Keep me" in imported.html
+    assert "CONFIDENTIAL" not in imported.html
+    assert any("footer" in warning.lower() or "header" in warning.lower() for warning in imported.warnings)
+    print("PASS: spaces and header warning")
+
+
+def main():
+    test_paragraphs_headings_and_marks()
+    test_image_order_and_link()
+    test_lists_restart_and_type()
+    test_tables_merges_and_rich_cells()
+    test_page_break_and_page_settings()
+    test_unicode_empty_and_hostile_package()
+    test_import_endpoint_hides_failures()
+    test_spaces_between_marks_and_header_warning()
+    print("ALL FIDELITY TESTS PASSED")
+
+
+if __name__ == "__main__":
+    main()

@@ -338,9 +338,22 @@ async def export_download(req: ExportRequest):
 
 @app.post("/api/import")
 async def import_doc(file: UploadFile = File(...)):
+    from .import_service import DocxImportError
+
     content = await file.read()
-    html = import_docx(content)
-    return {"html": html, "filename": file.filename}
+    try:
+        result = import_docx(content)
+    except DocxImportError:
+        return JSONResponse(
+            status_code=422,
+            content={"error": {"code": "invalid_docx", "message": "The document could not be opened."}},
+        )
+    return {
+        "html": result.html,
+        "filename": file.filename,
+        "page_settings": result.page_settings,
+        "warnings": result.warnings,
+    }
 
 
 def _profile_or_400(profile_id: str):

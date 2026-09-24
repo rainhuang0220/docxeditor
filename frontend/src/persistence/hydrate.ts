@@ -89,6 +89,7 @@ export async function hydrateDocument(): Promise<HydrationResult> {
         degraded: false,
         message: null,
         migrationWarning: migration.message,
+        pageSettings: current.record.pageSettings ?? null,
       }
     }
     return {
@@ -151,6 +152,7 @@ export async function hydrateDocument(): Promise<HydrationResult> {
       degraded: false,
       message: null,
       migrationWarning: warning,
+      pageSettings: current.record.pageSettings ?? null,
     }
   } catch (error) {
     const wrapped = wrapStorageError(error, 'unavailable')

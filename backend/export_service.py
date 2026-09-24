@@ -1,3 +1,4 @@
+import html as html_lib
 import os
 import re
 import io
@@ -15,11 +16,8 @@ def export_docx(html_content: str, filename: str = "document.docx") -> str:
 
     _setup_document_styles(doc)
 
-    # Add page numbers in footer
-    _add_page_number_footer(doc)
-
-    # Parse and add content
     blocks = _parse_html_sequential(html_content)
+    _assign_list_numbering(doc, blocks)
 
     for block in blocks:
         _add_block(doc, block)
@@ -44,9 +42,8 @@ def export_docx_to_bytes(html_content: str, page_settings: dict | None = None) -
     if page_settings:
         _apply_page_settings(doc, page_settings)
 
-    _add_page_number_footer(doc)
-
     blocks = _parse_html_sequential(html_content)
+    _assign_list_numbering(doc, blocks)
     for block in blocks:
         _add_block(doc, block)
 
@@ -144,8 +141,20 @@ def _parse_dimension(value: str) -> float | None:
 
 
 def _apply_page_settings(doc, settings: dict):
-    """Apply page size and margins from frontend settings to the document."""
+    """Apply one section's page size and margins. Twips win over CSS strings."""
+    from docx.shared import Twips
+
     section = doc.sections[0]
+    if settings.get("widthTwip") and settings.get("heightTwip"):
+        section.page_width = Twips(int(settings["widthTwip"]))
+        section.page_height = Twips(int(settings["heightTwip"]))
+        section.top_margin = Twips(int(settings.get("marginTopTwip", 1440)))
+        section.bottom_margin = Twips(int(settings.get("marginBottomTwip", 1440)))
+        section.left_margin = Twips(int(settings.get("marginLeftTwip", 1440)))
+        section.right_margin = Twips(int(settings.get("marginRightTwip", 1440)))
+        if int(settings["widthTwip"]) > int(settings["heightTwip"]):
+            section.orientation = 1
+        return
     width = _parse_dimension(settings.get('width', ''))
     height = _parse_dimension(settings.get('minHeight', '') or settings.get('height', ''))
     if width:
@@ -291,9 +300,20 @@ def _parse_html_sequential(html: str) -> list:
 
     # Handle list items within ul/ol
     expanded = []
+    groups = [0]
     for block in blocks:
         if block["tag"] in ("ul", "ol"):
-            _expand_list(block["tag"], block.get("raw_content", ""), expanded)
+            groups[0] += 1
+            _expand_list(
+                block["tag"],
+                block.get("raw_content", ""),
+                expanded,
+                0,
+                _list_start(block.get("attrs", "")),
+                _ol_type(block.get("attrs", "")),
+                groups[0],
+                groups,
+            )
         else:
             expanded.append(block)
 
@@ -337,7 +357,7 @@ def _strip_nested_lists(html: str) -> str:
     return "".join(result)
 
 
-def _expand_list(list_type: str, html: str, expanded: list, level: int = 0):
+def _expand_list(list_type: str, html: str, expanded: list, level: int = 0, start: int = 1, ol_type: str | None = None, group: int = 0, groups: list | None = None):
     """Recursively expand list HTML into flat list items with indent level."""
     # Match top-level <li> elements (non-greedy, handling nested lists)
     pos = 0
@@ -370,31 +390,50 @@ def _expand_list(list_type: str, html: str, expanded: list, level: int = 0):
         # Extract text content (strip nested lists from content)
         # Use depth-aware extraction to remove nested <ul>/<ol> blocks
         item_text_html = _strip_nested_lists(li_content)
-        # Strip <p> wrappers
+        align_match = re.search(r'text-align:\s*(left|center|right|justify)', item_text_html)
         item_text_html = re.sub(r'</?p[^>]*>', '', item_text_html)
-        text = re.sub(r'<[^>]+>', '', item_text_html).strip()
-
-        if text:
+        text = re.sub(r'<[^>]+>', '', item_text_html)
+        runs = _parse_runs(item_text_html)
+        if text.strip() or runs:
             expanded.append({
                 "tag": "li",
                 "list_type": list_type,
                 "level": level,
-                "text": text,
-                "runs": _parse_runs(item_text_html),
+                "text": text.strip(),
+                "runs": runs,
+                "group": group,
+                "start": start,
+                "ol_type": ol_type,
+                "align": align_match.group(1) if align_match else None,
             })
 
-        # Check for nested lists within this <li>
         nested_pos = 0
+        box = groups if groups is not None else [group]
         while nested_pos < len(li_content):
-            nested_start = re.search(r'<(ul|ol)[^>]*>', li_content[nested_pos:])
+            nested_start = re.search(r'<(ul|ol)([^>]*)>', li_content[nested_pos:])
             if not nested_start:
                 break
             nested_tag = nested_start.group(1)
+            nested_attrs = nested_start.group(2)
             content_begin = nested_pos + nested_start.end()
             nested_content_result = _extract_tag_content(li_content, nested_tag, content_begin)
             if nested_content_result:
                 nested_inner, nested_end = nested_content_result
-                _expand_list(nested_tag, nested_inner, expanded, level + 1)
+                if nested_tag == list_type:
+                    nested_group = group
+                else:
+                    box[0] += 1
+                    nested_group = box[0]
+                _expand_list(
+                    nested_tag,
+                    nested_inner,
+                    expanded,
+                    level + 1,
+                    _list_start(nested_attrs),
+                    _ol_type(nested_attrs) if nested_tag == "ol" else None,
+                    nested_group,
+                    box,
+                )
                 nested_pos = nested_end
             else:
                 break
@@ -483,8 +522,8 @@ def _parse_runs(html: str) -> list:
             if src_match:
                 runs.append({"image_src": src_match.group(1)})
         elif not seg.startswith('<'):
-            text = seg
-            if not text.strip():
+            text = html_lib.unescape(seg)
+            if text == '':
                 continue
             run = {"text": text}
             if bold:
@@ -512,7 +551,7 @@ def _parse_runs(html: str) -> list:
             runs.append(run)
 
     if not runs:
-        text = re.sub(r'<[^>]+>', '', html).strip()
+        text = html_lib.unescape(re.sub(r'<[^>]+>', '', html))
         if text:
             runs.append({"text": text})
 
@@ -534,21 +573,10 @@ def _add_block(doc: Document, block: dict):
         run.add_break(docx.enum.text.WD_BREAK.PAGE)
         return
     elif tag == "li":
-        level = block.get("level", 0)
-        if block.get("list_type") == "ul":
-            style = 'List Bullet' if level == 0 else f'List Bullet {level + 1}'
-        else:
-            style = 'List Number' if level == 0 else f'List Number {level + 1}'
-        # Fallback if style doesn't exist in template
-        try:
-            p = doc.add_paragraph(style=style)
-        except KeyError:
-            p = doc.add_paragraph(style='List Bullet' if block.get("list_type") == "ul" else 'List Number')
-            # Set indentation manually for nested items
-            if level > 0:
-                from docx.shared import Cm
-                p.paragraph_format.left_indent = Cm(1.27 * level)
-        _add_runs_to_paragraph(p, block.get("runs", [{"text": block["text"]}]))
+        p = doc.add_paragraph()
+        _add_runs_to_paragraph(p, block.get("runs") or [])
+        if block.get("num_id"):
+            _set_num_pr(p, int(block["num_id"]), int(block.get("level") or 0))
     elif tag == "blockquote":
         p = doc.add_paragraph(style='Quote')
         _add_runs_to_paragraph(p, block.get("runs", [{"text": block["text"]}]))
@@ -621,13 +649,21 @@ def _add_runs_to_paragraph(paragraph, runs: list):
             if src.startswith("data:"):
                 match = re.match(r'data:image/[^;]+;base64,(.+)', src)
                 if match:
-                    image_data = base64.b64decode(match.group(1))
+                    try:
+                        image_data = base64.b64decode(match.group(1), validate=True)
+                    except Exception:
+                        continue
+                    if len(image_data) > 2 * 1024 * 1024:
+                        continue
                     image_stream = io.BytesIO(image_data)
                     run = paragraph.add_run()
-                    run.add_picture(image_stream, width=Inches(5))
+                    run.add_picture(image_stream)
             continue
 
         text = run_data.get("text", "")
+        if text == "\n" and len(run_data) == 1:
+            paragraph.add_run().add_break()
+            continue
         if not text:
             continue
 
@@ -668,49 +704,87 @@ def _add_runs_to_paragraph(paragraph, runs: list):
 
 
 def _add_table_from_html(doc: Document, block: dict):
-    """Parse and add an HTML table to the document."""
-    from docx.oxml import OxmlElement
+    """Parse a table as nested HTML and write spans plus cell blocks."""
+    from html.parser import HTMLParser
 
-    html = block.get("raw_content", block.get("text", ""))
-    rows_data = []
-    for tr_match in re.finditer(r'<tr[^>]*>(.*?)</tr>', html, re.DOTALL):
-        cells = []
-        for cell_match in re.finditer(r'<(td|th)([^>]*)>(.*?)</(?:td|th)>', tr_match.group(1), re.DOTALL):
-            attrs = cell_match.group(2)
-            content = re.sub(r'<[^>]+>', '', cell_match.group(3)).strip()
-            # Extract background color
-            bg_color = None
-            bg_match = re.search(r'background-color:\s*([^;"]+)', attrs)
-            if bg_match:
-                bg_color = bg_match.group(1).strip()
-            # Also check data-background-color attribute
-            data_bg = re.search(r'data-background-color="([^"]*)"', attrs)
-            if data_bg:
-                bg_color = data_bg.group(1)
-            cells.append({"text": content, "bg": bg_color, "is_header": cell_match.group(1) == "th"})
-        if cells:
-            rows_data.append(cells)
+    class _Cells(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=False)
+            self.rows = []
+            self._row = None
+            self._cell = None
+            self._parts: list[str] = []
 
-    if not rows_data:
+        def handle_starttag(self, tag, attrs):
+            attr = {key.lower(): value for key, value in attrs}
+            if tag == "tr" and self._cell is None:
+                self._row = []
+                return
+            if tag in {"td", "th"} and self._row is not None and self._cell is None:
+                self._cell = {
+                    "header": tag == "th",
+                    "colspan": _span_attr(attr.get("colspan")),
+                    "rowspan": _span_attr(attr.get("rowspan")),
+                    "bg": _background_attr(attr),
+                }
+                self._parts = []
+                return
+            if self._cell is not None:
+                self._parts.append(self.get_starttag_text() or "")
+
+        def handle_endtag(self, tag):
+            if tag in {"td", "th"} and self._cell is not None:
+                self._cell["html"] = "".join(self._parts)
+                self._row.append(self._cell)
+                self._cell = None
+                return
+            if tag == "tr" and self._row is not None and self._cell is None:
+                if self._row:
+                    self.rows.append(self._row)
+                self._row = None
+                return
+            if self._cell is not None:
+                self._parts.append(f"</{tag}>")
+
+        def handle_data(self, data):
+            if self._cell is not None:
+                self._parts.append(data)
+
+    parser = _Cells()
+    parser.feed(block.get("raw_content", ""))
+    rows = parser.rows
+    if not rows:
         return
-
-    max_cols = max(len(row) for row in rows_data)
-    table = doc.add_table(rows=len(rows_data), cols=max_cols)
-    table.style = 'Table Grid'
-
-    for i, row in enumerate(rows_data):
-        for j, cell_data in enumerate(row):
-            if j < max_cols:
-                cell = table.cell(i, j)
-                cell.text = cell_data["text"]
-                # Apply background color via shading
-                if cell_data.get("bg"):
-                    color_hex = cell_data["bg"].lstrip("#")
-                    if len(color_hex) == 6:
-                        shading = OxmlElement('w:shd')
-                        shading.set(qn('w:fill'), color_hex.upper())
-                        shading.set(qn('w:val'), 'clear')
-                        cell._tc.get_or_add_tcPr().append(shading)
+    cols = 0
+    for row in rows:
+        cols = max(cols, sum(cell["colspan"] for cell in row))
+    if cols < 1:
+        return
+    table = doc.add_table(rows=len(rows), cols=cols)
+    table.style = "Table Grid"
+    covered = [[False for _ in range(cols)] for _ in rows]
+    for r, row in enumerate(rows):
+        c = 0
+        header = any(cell["header"] for cell in row)
+        if header:
+            _mark_header_row(table.rows[r])
+        for cell in row:
+            while c < cols and covered[r][c]:
+                c += 1
+            if c >= cols:
+                break
+            rs = min(cell["rowspan"], len(rows) - r)
+            cs = min(cell["colspan"], cols - c)
+            for i in range(rs):
+                for j in range(cs):
+                    covered[r + i][c + j] = True
+            origin = table.cell(r, c)
+            if rs > 1 or cs > 1:
+                origin.merge(table.cell(r + rs - 1, c + cs - 1))
+            _fill_cell(doc, origin, cell.get("html") or "")
+            if cell.get("bg"):
+                _shade_cell(origin, cell["bg"])
+            c += cs
 
 
 def _add_image_from_data_url(doc: Document, src: str):
@@ -726,12 +800,26 @@ def _add_image_from_data_url(doc: Document, src: str):
     # Add image with a max width of 5 inches to fit page
     p = doc.add_paragraph()
     run = p.add_run()
-    run.add_picture(image_stream, width=Inches(5))
+    run.add_picture(image_stream)
+
+
+def _allowed_hyperlink(url: str) -> str | None:
+    cleaned = html_lib.unescape(url).strip()
+    lower = cleaned.lower()
+    if lower.startswith(("https://", "http://", "mailto:")) and not any(ch in cleaned for ch in '<>"'):
+        return cleaned
+    return None
 
 
 def _add_hyperlink(paragraph, text: str, url: str, run_data: dict):
     """Add a hyperlink to a paragraph using python-docx low-level XML."""
     from docx.oxml import OxmlElement
+
+    safe = _allowed_hyperlink(url)
+    if not safe:
+        paragraph.add_run(text)
+        return
+    url = safe
 
     # Create the relationship
     part = paragraph.part
@@ -769,3 +857,180 @@ def _add_hyperlink(paragraph, text: str, url: str, run_data: dict):
 
     hyperlink.append(new_run)
     paragraph._element.append(hyperlink)
+
+
+def _list_start(attrs: str) -> int:
+    match = re.search(r'\bstart="(\d+)"', attrs or "")
+    return int(match.group(1)) if match else 1
+
+
+def _ol_type(attrs: str) -> str | None:
+    match = re.search(r'\btype="([aAiI1])"', attrs or "")
+    if not match or match.group(1) == "1":
+        return None
+    return match.group(1)
+
+
+def _span_attr(value: str | None) -> int:
+    try:
+        parsed = int(value or "1")
+    except ValueError:
+        return 1
+    return parsed if parsed > 0 else 1
+
+
+def _background_attr(attrs: dict) -> str | None:
+    raw = attrs.get("data-background-color") or ""
+    if not raw:
+        style = attrs.get("style") or ""
+        match = re.search(r'background-color:\s*#?([0-9A-Fa-f]{6})', style)
+        raw = match.group(1) if match else ""
+    raw = raw.lstrip("#")
+    return raw.upper() if re.fullmatch(r"[0-9A-Fa-f]{6}", raw) else None
+
+
+def _mark_header_row(row) -> None:
+    from docx.oxml import OxmlElement
+
+    tr_pr = row._tr.get_or_add_trPr()
+    tr_pr.append(OxmlElement("w:tblHeader"))
+
+
+def _shade_cell(cell, color: str) -> None:
+    from docx.oxml import OxmlElement
+
+    shading = OxmlElement("w:shd")
+    shading.set(qn("w:fill"), color.upper())
+    shading.set(qn("w:val"), "clear")
+    cell._tc.get_or_add_tcPr().append(shading)
+
+
+def _fill_cell(doc: Document, cell, html: str) -> None:
+    blocks = _parse_html_sequential(html) if html.strip() else []
+    if not blocks:
+        cell.paragraphs[0].clear()
+        return
+    first = True
+    for block in blocks:
+        if block["tag"] == "table":
+            before = len(doc.tables)
+            _add_table_from_html(doc, block)
+            if len(doc.tables) > before:
+                moved = doc.tables[-1]._tbl
+                parent = moved.getparent()
+                if parent is not None:
+                    parent.remove(moved)
+                cell._tc.append(moved)
+            continue
+        paragraph = cell.paragraphs[0] if first else cell.add_paragraph()
+        if first:
+            paragraph.clear()
+            first = False
+        if block["tag"] == "img":
+            _add_image_from_data_url_run(paragraph, block.get("src", ""))
+        elif block["tag"] == "page_break":
+            paragraph.add_run().add_break(docx.enum.text.WD_BREAK.PAGE)
+        else:
+            _add_runs_to_paragraph(paragraph, block.get("runs") or [])
+        if block.get("align"):
+            paragraph.alignment = {
+                "center": WD_ALIGN_PARAGRAPH.CENTER,
+                "right": WD_ALIGN_PARAGRAPH.RIGHT,
+                "justify": WD_ALIGN_PARAGRAPH.JUSTIFY,
+                "left": WD_ALIGN_PARAGRAPH.LEFT,
+            }.get(block["align"], WD_ALIGN_PARAGRAPH.LEFT)
+
+
+def _add_image_from_data_url_run(paragraph, src: str) -> None:
+    if not src.startswith("data:"):
+        return
+    match = re.match(r'data:image/(?:png|jpeg|gif|webp);base64,([A-Za-z0-9+/=\s]+)', src)
+    if not match:
+        return
+    try:
+        image_data = base64.b64decode(match.group(1), validate=True)
+    except Exception:
+        return
+    if len(image_data) > 2 * 1024 * 1024:
+        return
+    paragraph.add_run().add_picture(io.BytesIO(image_data))
+
+
+def _set_num_pr(paragraph, num_id: int, level: int) -> None:
+    from docx.oxml import OxmlElement
+
+    p_pr = paragraph._p.get_or_add_pPr()
+    for old in p_pr.findall(qn("w:numPr")):
+        p_pr.remove(old)
+    num_pr = OxmlElement("w:numPr")
+    ilvl = OxmlElement("w:ilvl")
+    ilvl.set(qn("w:val"), str(level))
+    nid = OxmlElement("w:numId")
+    nid.set(qn("w:val"), str(num_id))
+    num_pr.append(ilvl)
+    num_pr.append(nid)
+    p_pr.append(num_pr)
+
+
+def _assign_list_numbering(doc: Document, blocks: list) -> None:
+    groups: dict[int, list] = {}
+    for block in blocks:
+        if block.get("tag") == "li" and block.get("group"):
+            groups.setdefault(block["group"], []).append(block)
+    if not groups:
+        return
+    numbering = doc.part.numbering_part._element
+    for items in groups.values():
+        kind = "bullet" if items[0].get("list_type") == "ul" else (items[0].get("ol_type") or "decimal")
+        starts: dict[int, int] = {}
+        for item in items:
+            starts.setdefault(int(item.get("level") or 0), int(item.get("start") or 1))
+        num_id = _add_numbering_definition(numbering, kind, starts)
+        for item in items:
+            item["num_id"] = num_id
+
+
+def _add_numbering_definition(numbering, kind: str, starts: dict[int, int]) -> int:
+    from docx.oxml import OxmlElement
+
+    formats = {
+        "bullet": ("bullet", "•"),
+        "decimal": ("decimal", "%1."),
+        "a": ("lowerLetter", "%1."),
+        "A": ("upperLetter", "%1."),
+        "i": ("lowerRoman", "%1."),
+        "I": ("upperRoman", "%1."),
+    }
+    fmt, _text = formats.get(kind, ("decimal", "%1."))
+    abstract_ids = [int(el.get(qn("w:abstractNumId"))) for el in numbering.findall(qn("w:abstractNum"))]
+    num_ids = [int(el.get(qn("w:numId"))) for el in numbering.findall(qn("w:num"))]
+    abstract_id = max(abstract_ids or [0]) + 1
+    num_id = max(num_ids or [0]) + 1
+    abstract = OxmlElement("w:abstractNum")
+    abstract.set(qn("w:abstractNumId"), str(abstract_id))
+    multi = OxmlElement("w:multiLevelType")
+    multi.set(qn("w:val"), "hybridMultilevel")
+    abstract.append(multi)
+    for level in range(9):
+        lvl = OxmlElement("w:lvl")
+        lvl.set(qn("w:ilvl"), str(level))
+        start = OxmlElement("w:start")
+        start.set(qn("w:val"), str(starts.get(level, 1)))
+        num_fmt = OxmlElement("w:numFmt")
+        num_fmt.set(qn("w:val"), fmt)
+        lvl_text = OxmlElement("w:lvlText")
+        lvl_text.set(qn("w:val"), "•" if fmt == "bullet" else f"%{level + 1}.")
+        lvl.extend([start, num_fmt, lvl_text])
+        abstract.append(lvl)
+    first_num = numbering.find(qn("w:num"))
+    if first_num is not None:
+        first_num.addprevious(abstract)
+    else:
+        numbering.append(abstract)
+    num = OxmlElement("w:num")
+    num.set(qn("w:numId"), str(num_id))
+    ref = OxmlElement("w:abstractNumId")
+    ref.set(qn("w:val"), str(abstract_id))
+    num.append(ref)
+    numbering.append(num)
+    return num_id

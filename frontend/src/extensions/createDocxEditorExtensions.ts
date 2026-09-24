@@ -29,10 +29,16 @@ export const CustomTableCell = TableCell.extend({
       ...this.parent?.(),
       backgroundColor: {
         default: null,
-        parseHTML: element => element.getAttribute('data-background-color') || element.style.backgroundColor || null,
+        parseHTML: element => {
+          const raw = element.getAttribute('data-background-color') || element.style.backgroundColor || ''
+          const match = raw.trim().match(/^#?([0-9A-Fa-f]{6})$/)
+          return match ? `#${match[1].toUpperCase()}` : null
+        },
         renderHTML: attributes => {
-          if (!attributes.backgroundColor) return {}
-          return { style: `background-color: ${attributes.backgroundColor}`, 'data-background-color': attributes.backgroundColor }
+          const match = String(attributes.backgroundColor || '').match(/^#([0-9A-Fa-f]{6})$/)
+          if (!match) return {}
+          const color = `#${match[1].toUpperCase()}`
+          return { style: `background-color: ${color}`, 'data-background-color': color }
         },
       },
     }
@@ -89,7 +95,7 @@ export function createDocxEditorExtensions(options: CreateDocxEditorExtensionsOp
   if (!without.has('image')) {
     extensions.push(
       headless
-        ? Image.configure({ inline: false })
+        ? Image.configure({ inline: false, allowBase64: true })
         : ImageResize.configure({ inline: false }),
     )
   }
