@@ -70,8 +70,8 @@ class Backend:
             return exc.code, dict(exc.headers), exc.read()
 
 
-# Source python READY is fast; cold onefile READY is ~24–34s (matches Rust PACKAGED_READY_TIMEOUT).
-PACKAGED_READY_TIMEOUT_S = 45.0
+# Source python READY is fast; cold onefile READY is ~24–34s idle and can exceed 45s under load.
+PACKAGED_READY_TIMEOUT_S = 75.0
 
 
 def start(
