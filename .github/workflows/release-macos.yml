@@ -57,6 +57,8 @@ jobs:
       - run: bash packaging/build-sidecar.sh
       - run: npm ci
         working-directory: frontend
+      - run: npm run build
+        working-directory: frontend
       - name: Build and sign
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
