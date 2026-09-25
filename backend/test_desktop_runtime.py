@@ -70,7 +70,17 @@ class Backend:
             return exc.code, dict(exc.headers), exc.read()
 
 
-def start(tmp: Path, token: bytes = TOKEN, command: list[str] | None = None, extra: dict | None = None) -> Backend:
+# Source python READY is fast; cold onefile READY is ~24–34s (matches Rust PACKAGED_READY_TIMEOUT).
+PACKAGED_READY_TIMEOUT_S = 45.0
+
+
+def start(
+    tmp: Path,
+    token: bytes = TOKEN,
+    command: list[str] | None = None,
+    extra: dict | None = None,
+    ready_timeout: float = 20.0,
+) -> Backend:
     tmp.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
     env.pop("DOCXEDITOR_DEV_INSECURE", None)
@@ -93,7 +103,7 @@ def start(tmp: Path, token: bytes = TOKEN, command: list[str] | None = None, ext
     threading.Thread(target=proc.stderr.read, daemon=True).start()
     proc.stdin.write(f"v1 {token.hex()}\n".encode("ascii"))
     proc.stdin.flush()
-    line = _readline(proc.stdout, 20)
+    line = _readline(proc.stdout, ready_timeout)
     stderr = b""
     if line is None:
         proc.kill()
@@ -329,7 +339,12 @@ def test_packaged_binary_if_present(tmp: Path):
         for secret in secret_lines:
             if len(secret) > 8:
                 assert secret.encode() not in blob
-    backend = start(tmp, command=[str(path)], extra={"PATH": "/usr/bin:/bin"})
+    backend = start(
+        tmp,
+        command=[str(path)],
+        extra={"PATH": "/usr/bin:/bin"},
+        ready_timeout=PACKAGED_READY_TIMEOUT_S,
+    )
     try:
         status, _headers, body = backend.request("GET", "/api/health", token=backend.token)
         assert status == 200
