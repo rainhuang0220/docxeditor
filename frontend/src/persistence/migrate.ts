@@ -108,36 +108,33 @@ export async function migrateLegacyPersistence(): Promise<MigrationResult> {
   }
 
   if (currentLoad.status === 'ok') {
+    let versionWarning: string | undefined
     try {
       const versionCount = await countVersions()
       if (versionCount === 0 && legacyVerRaw) {
         const parsedVersions = parseLegacyVersionsJson(legacyVerRaw)
         if (parsedVersions === null) {
-          if (legacyDocRaw) removeLegacyKey(LEGACY_DOCUMENT_KEY)
-          return { status: 'skipped', versionWarning: 'Could not migrate version history.' }
-        }
-        if (parsedVersions.length > 0) {
+          versionWarning = 'Could not migrate version history.'
+        } else if (parsedVersions.length > 0) {
           const kept = newestFirst(parsedVersions).slice(0, MAX_VERSIONS)
           await writeBundle(null, kept)
           if (await verifyBundle(null, kept)) {
             removeLegacyKey(LEGACY_VERSIONS_KEY)
           } else {
-            if (legacyDocRaw) removeLegacyKey(LEGACY_DOCUMENT_KEY)
-            return { status: 'skipped', versionWarning: 'Could not migrate version history.' }
+            versionWarning = 'Could not migrate version history.'
           }
         } else {
           removeLegacyKey(LEGACY_VERSIONS_KEY)
         }
-      } else if (versionCount > 0 && legacyVerRaw) {
-        removeLegacyKey(LEGACY_VERSIONS_KEY)
       }
     } catch (error) {
-      const wrapped = wrapStorageError(error, 'migration')
-      if (legacyDocRaw) removeLegacyKey(LEGACY_DOCUMENT_KEY)
-      return { status: 'skipped', versionWarning: wrapped.message }
+      versionWarning = wrapStorageError(error, 'migration').message
     }
-    if (legacyDocRaw) removeLegacyKey(LEGACY_DOCUMENT_KEY)
-    return { status: 'skipped' }
+    const legacy = legacyDocRaw ? parseLegacyDocumentJson(legacyDocRaw) : null
+    if (legacy && legacy.html === currentLoad.record.html) {
+      removeLegacyKey(LEGACY_DOCUMENT_KEY)
+    }
+    return { status: 'skipped', versionWarning }
   }
 
   if (!legacyDocRaw && !legacyVerRaw) {
