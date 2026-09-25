@@ -44,7 +44,7 @@ export function backendReadinessView(
       tone: 'progress',
       canRetry: false,
       title: still
-        ? 'Backend is still starting. This can take up to about a minute on first launch.'
+        ? 'Backend is still starting. First launch can take over a minute on a cold packaged build.'
         : 'Backend is starting.',
     }
   }

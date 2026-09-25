@@ -204,8 +204,8 @@ pub fn start(shared: &SharedSession) -> Result<(), String> {
     start_at(shared, &path, PACKAGED_READY_TIMEOUT)
 }
 
-/// Cold onefile READY ~26–31s; timeout keeps margin while UI shows progress.
-pub const PACKAGED_READY_TIMEOUT: Duration = Duration::from_secs(45);
+/// Cold onefile READY ~24–34s idle; under load can exceed 45s. Keep margin while UI shows progress.
+pub const PACKAGED_READY_TIMEOUT: Duration = Duration::from_secs(75);
 
 pub fn start_at(shared: &SharedSession, path: &std::path::Path, ready_timeout: Duration) -> Result<(), String> {
     {
@@ -361,8 +361,9 @@ mod tests {
 
     #[test]
     fn packaged_ready_timeout_covers_cold_onefile() {
-        // Measured cold READY ~26–31s; 20s was too short and marked Offline.
-        assert!(PACKAGED_READY_TIMEOUT > Duration::from_secs(31));
+        // Measured idle cold READY ~24–34s; under load observed up to ~61s.
+        // 45s still marked Offline on a contended relaunch.
+        assert!(PACKAGED_READY_TIMEOUT > Duration::from_secs(61));
         assert!(PACKAGED_READY_TIMEOUT <= Duration::from_secs(90));
     }
 
