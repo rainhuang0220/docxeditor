@@ -3,8 +3,9 @@ import { createDocxEditorExtensions } from '../extensions/createDocxEditorExtens
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useEditorContext } from '../context/EditorContext'
 import { saveHeaderFooter, loadHeaderFooter } from '../utils/storage'
-import { apiFetch } from '../utils/api'
 import { showToast } from './Toast'
+import { requestDocxImport } from '../persistence/importDocx'
+import { getPageSettings, subscribePageStyle, toPageStyle } from '../persistence/pageSettings'
 import { usePersistence } from '../persistence/PersistenceContext'
 import { DEFAULT_DOCUMENT_HTML, resolveInitialHtml } from '../persistence/hydrate'
 import { isDocumentMutationLocked } from '../ai/mutationLatch'
@@ -47,14 +48,7 @@ function EditorInner({ initialHtml }: { initialHtml: string }) {
   const { replaceCurrentDocument } = usePersistence()
   const isReviewPendingRef = useRef(isReviewPending)
   isReviewPendingRef.current = isReviewPending
-  const [pageStyle, setPageStyle] = useState<PageStyle>({
-    width: '210mm',
-    minHeight: '297mm',
-    paddingTop: '25.4mm',
-    paddingBottom: '25.4mm',
-    paddingLeft: '25.4mm',
-    paddingRight: '25.4mm',
-  })
+  const [pageStyle, setPageStyle] = useState<PageStyle>(() => toPageStyle(getPageSettings()))
 
   const editor = useEditor({
     extensions: createDocxEditorExtensions({
@@ -70,14 +64,7 @@ function EditorInner({ initialHtml }: { initialHtml: string }) {
     },
   })
 
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail
-      if (detail) setPageStyle(detail)
-    }
-    window.addEventListener('editor:set-page-style', handler)
-    return () => window.removeEventListener('editor:set-page-style', handler)
-  }, [])
+  useEffect(() => subscribePageStyle(settings => setPageStyle(toPageStyle(settings))), [])
 
   useEffect(() => {
     setEditor(editor)
@@ -92,17 +79,17 @@ function EditorInner({ initialHtml }: { initialHtml: string }) {
     const file = e.dataTransfer.files[0]
     if (!file || !file.name.endsWith('.docx')) return
     if (!guardSession('mutateDocument')) return
-    const formData = new FormData()
-    formData.append('file', file)
     try {
-      const res = await apiFetch('/api/import', { method: 'POST', body: formData })
-      const data = await res.json()
-      if (data.html && editor) {
-        const result = await replaceCurrentDocument(data.html, 'Before import')
-        if (!result.replaced) return
-        setDocumentTitle(file.name.replace(/\.docx$/i, ''))
-        showToast(`Opened "${file.name}"`, 'success')
+      const imported = await requestDocxImport(file)
+      if (!imported.ok || !editor) {
+        showToast(imported.ok ? 'Import failed.' : imported.message, 'error')
+        return
       }
+      const result = await replaceCurrentDocument(imported.html, 'Before import', imported.pageSettings ?? undefined)
+      if (!result.replaced) return
+      setDocumentTitle(file.name.replace(/\.docx$/i, ''))
+      if (imported.warnings.length > 0) showToast(`Opened "${file.name}". ${imported.warnings[0]}`, 'info')
+      else showToast(`Opened "${file.name}"`, 'success')
     } catch {
       showToast('Import failed. Is the backend running?', 'error')
     }

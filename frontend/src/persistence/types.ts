@@ -9,11 +9,22 @@ export const AUTOSAVE_DEBOUNCE_MS = 800
 export const LEGACY_DOCUMENT_KEY = 'ai-doc-ide-document'
 export const LEGACY_VERSIONS_KEY = 'ai-doc-ide-versions'
 
+export interface PageSettingsRecord {
+  widthTwip: number
+  heightTwip: number
+  marginTopTwip: number
+  marginRightTwip: number
+  marginBottomTwip: number
+  marginLeftTwip: number
+}
+
 export interface CurrentDocumentRecord {
   id: typeof CURRENT_DOCUMENT_ID
   schemaVersion: typeof DOCUMENT_SCHEMA_VERSION
   html: string
   savedAt: string
+  /** Absent on records saved before page setup was stored. */
+  pageSettings?: PageSettingsRecord
 }
 
 export interface VersionRecord {
@@ -42,6 +53,7 @@ export type HydrationResult =
       message: string | null
       /** Distinct from save status: current document may still be writable. */
       migrationWarning?: string | null
+      pageSettings?: PageSettingsRecord | null
     }
   | {
       phase: 'blocked'

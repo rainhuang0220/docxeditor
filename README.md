@@ -12,7 +12,7 @@ This is an early, actively developed project. It is not Microsoft Word, not loss
 
 ## Status
 
-Current `main` includes AI editing hardening that is **not** in the v0.1.0 DMG:
+Current `main` includes AI editing hardening and an authenticated desktop sidecar that are **not** in the published v0.1.0 DMG:
 
 - chat streams over SSE; the document is not written until a terminal result
 - request-time document, selection, cursor, revision, and thread identity
@@ -20,8 +20,9 @@ Current `main` includes AI editing hardening that is **not** in the v0.1.0 DMG:
 - runtime decode + complete preflight + one atomic ProseMirror transaction
 - confirmable edits then Accept / Reject, with a mutation firewall while pending
 - invalid, stale, aborted, or truncated results leave the document unchanged
+- the Tauri shell starts a bundled backend, keeps a per-launch token out of the WebView, and proxies API calls
 
-Desktop packaging still expects a local Python backend. Browser `npm run dev` is the supported developer path.
+Browser `npm run dev` can still talk to `python3 -m backend.desktop_runtime --dev-insecure`. That flag is rejected by a frozen sidecar. An unsigned engineering bundle can be built from this checkout; it is not notarized and it is not the v0.1.0 download.
 
 ## Features
 
@@ -31,16 +32,34 @@ Desktop packaging still expects a local Python backend. Browser `npm run dev` is
 
 **AI.** OpenAI and Anthropic native tool-calling. Chat streams in the panel. Selection and cursor are captured when you send. Model output is decoded, planned against the original document, and applied as one transaction. Destructive edits (`replace_content`, `replace_paragraph`, `delete_paragraph`) require Accept or Reject. API keys are stored by the backend: the OS keyring when it is available, otherwise in process memory for that backend session only. `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` remain backend-only fallbacks.
 
-**DOCX.** Best-effort import/export of headings, lists, tables, images, hyperlinks, and page breaks.
+**DOCX.** Import and export of the structures the editor can store. See the matrix below. This is not a lossless Word round-trip.
+
+### DOCX support
+
+| Feature | Status |
+|---|---|
+| Paragraphs, empty paragraphs, H1–H3 | Supported |
+| Bold, italic, underline, strike, superscript, subscript | Supported |
+| Font size, hex color, left/center/right/justify | Supported |
+| http, https, and mailto links | Supported. Other addresses are dropped and the link text is kept |
+| Images with text before and after | Supported as separate blocks. The editor has no inline image |
+| Bullet lists and decimal, letter, or roman lists, including nesting and a start value | Supported. A nested item with no parent item in that list is flattened and reported as a warning |
+| Tables, colspan, rowspan, formatted cell text, images and links in cells, hex cell shading | Supported. Merged cells are not repeated |
+| Page breaks | Supported |
+| First section page size and margins | Supported and stored with the document. Restoring an older version resets the page to A4, because versions store HTML only |
+| H4 and below | Kept as H3, with a warning |
+| Headers, footers, and page-number fields | Not imported or exported. The on-page header and footer boxes are editor chrome, not Word sections |
+| Later sections with a different page setup | Not supported. The first section is kept and a warning is shown |
+| Comments, footnotes, text boxes, equations, OLE objects, theme colors, symbol-font characters | Not supported. Text boxes and symbol characters are skipped with a warning. A package with a DTD, or strict OOXML that this parser cannot read, is rejected |
+
+A parsed file is not a lossless import. If a supported feature would be lost, the import reports a warning instead of saying the open was complete.
 
 ### Limitations
 
-- Not a Word replacement. Headers/footers in the UI are placeholders, not OOXML sections.
-- DOCX round-trip is lossy (comments, native headers/footers, stylesheets, H4+ collapsed).
-- The v0.1.0 macOS arm64 DMG does not bundle a Python runtime. AI in that build needs a local FastAPI process (or this checkout at a well-known path). Unsigned; Gatekeeper may block first launch.
+- Not a Word replacement.
+- The published v0.1.0 macOS arm64 DMG predates the authenticated sidecar. It does not bundle this backend. Building from current `main` can produce an unsigned Apple Silicon app; that build is not notarized and is not v0.1.0.
 - If the OS keyring is unavailable, a key typed in the app lasts only for the current backend process and is not written to disk
-- A local process that can call the backend is not authenticated yet
-- No Windows/Linux prebuilt. No collaboration. No local-model providers yet.
+- No Windows, Linux, or Intel Mac build. No collaboration. No local-model providers yet.
 
 ## Architecture
 
@@ -159,7 +178,7 @@ Current AI invariants: [`GPT-HANDOFF.md`](./GPT-HANDOFF.md).
 
 ## Releases
 
-A macOS Apple Silicon preview is on [GitHub Releases](https://github.com/rainhuang0220/docxeditor/releases) as **v0.1.0**. That build predates the AI safety work on `main`. Prefer `npm run dev` for current behavior.
+A macOS Apple Silicon preview is on [GitHub Releases](https://github.com/rainhuang0220/docxeditor/releases) as **v0.1.0**. That download predates the AI safety work and the authenticated sidecar on `main`. Prefer `npm run dev` for current behavior. A locally built unsigned app is an engineering bundle, not a signed or notarized release.
 
 ## License
 

@@ -10,7 +10,7 @@ Word 风格的桌面文档编辑器。AI 通过结构化操作改 TipTap/ProseMi
 
 ## 状态
 
-当前 `main` 上的 AI 编辑加固 **不包含** 在 v0.1.0 DMG 里：
+当前 `main` 上的 AI 编辑加固和带身份校验的桌面 sidecar **不包含** 在已发布的 v0.1.0 DMG 里：
 
 - 对话走 SSE；文档只在终端结果上写入
 - 请求时捕获文档、选区、光标、revision、线程身份
@@ -18,8 +18,9 @@ Word 风格的桌面文档编辑器。AI 通过结构化操作改 TipTap/ProseMi
 - 运行时解码 + 完整预检 + 一次原子 ProseMirror 事务
 - 需确认的编辑走 Accept / Reject，pending 时禁止其它文档变更
 - 非法、过期、中止、截断的结果不改文档
+- Tauri 启动自带后端，会话令牌不进入 WebView
 
-桌面包需要本机 Python 后端。开发请用浏览器路径 `npm run dev`。
+开发可用 `npm run dev`，或 `python3 -m backend.desktop_runtime --dev-insecure`。冻结后的 sidecar 拒绝这个开关。从当前源码打出的 Apple Silicon 包是未签名工程包，不是 v0.1.0，也没有公证。
 
 ## 现有能力
 
@@ -27,15 +28,14 @@ Word 风格的桌面文档编辑器。AI 通过结构化操作改 TipTap/ProseMi
 
 **AI。** OpenAI / Anthropic 原生 tool-calling。选区与光标在发送时冻结。模型输出经解码、按原始文档预检、一次事务提交。整篇替换 / 替换块 / 删除块需要 Accept 或 Reject。API key 由后端保存：系统钥匙串可用时写入钥匙串，否则只留在当前后端进程内存。`OPENAI_API_KEY` 和 `ANTHROPIC_API_KEY` 仍是仅后端可用的回退。
 
-**DOCX。** 尽力导入导出标题、列表、表格、图片、超链接、分页符。不是无损往返。页眉页脚是界面占位。
+**DOCX。** 编辑器能表示的结构可以导入导出：段落、H1–H3、常见字符样式、对齐、字号和十六进制颜色、http/https/mailto 链接、块级图片及其前后文字、项目符号和数字/字母/罗马列表（含嵌套和起始编号；没有父项的嵌套项会被压平并给出警告）、带合并单元格的表格、分页符，以及第一节的页面大小和页边距。页眉页脚、多节不同版式、批注、脚注、文本框、公式不支持。成功打开不等于无损。
 
 ## 限制
 
 - 不是 Word 替代品
-- v0.1.0 DMG 不带 Python 运行时；未签名
+- 已发布的 v0.1.0 DMG 没有这套带身份校验的 sidecar
 - 系统钥匙串不可用时，应用里输入的 key 只在当前后端进程有效，不会写入磁盘
-- 能访问本机后端的本地进程还没有身份校验
-- 无协作、无 Windows/Linux 预编译包
+- 无协作，无 Windows、Linux 或 Intel Mac 预编译包
 
 ## 快速开始
 

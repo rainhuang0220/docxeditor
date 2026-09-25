@@ -29,6 +29,7 @@ export interface SaveCoordinator {
   flushNow(): Promise<SaveOutcome>
   beginDestructiveTransition(): Promise<SaveOutcome>
   markClean(savedAt: string, html?: string): void
+  invalidateSnapshot(): void
   markDegraded(message: string): void
   getStatus(): PersistenceStatus
   getGeneration(): number
@@ -219,6 +220,10 @@ export function createSaveCoordinator(options: SaveCoordinatorOptions): SaveCoor
       lastHtml = null
       clearTimer()
       return outcome
+    },
+
+    invalidateSnapshot() {
+      lastHtml = null
     },
 
     markClean(savedAt, html) {

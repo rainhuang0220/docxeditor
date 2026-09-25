@@ -11,6 +11,13 @@ import {
 import { useEditorContext } from '../context/EditorContext'
 import { showToast } from '../components/Toast'
 import { saveCurrentDocument } from './documentStore.ts'
+import {
+  DEFAULT_PAGE_SETTINGS,
+  getPageSettings,
+  setPageSettings,
+  subscribePageSettingsPersist,
+  type PageSettings,
+} from './pageSettings.ts'
 import { PersistenceError, SkipPersistError } from './errors.ts'
 import { hydrateDocument } from './hydrate.ts'
 import { bindPageLifecycle } from './lifecycle.ts'
@@ -41,7 +48,7 @@ export interface PersistenceApi {
   scheduleSave: () => void
   flushNow: () => Promise<SaveOutcome>
   createVersion: (description: string, opts?: { html?: string; notify?: boolean }) => Promise<VersionOutcome>
-  replaceCurrentDocument: (nextHtml: string, description: string) => Promise<ReplaceDocumentOutcome>
+  replaceCurrentDocument: (nextHtml: string, description: string, pageSettings?: PageSettings) => Promise<ReplaceDocumentOutcome>
   saveManualVersion: () => Promise<SaveOutcome>
   persistAfterAccept: () => Promise<SaveOutcome>
   persistAfterReject: () => Promise<SaveOutcome>
@@ -106,6 +113,9 @@ export function PersistenceProvider({ children }: { children: ReactNode }) {
     void (async () => {
       const result = await hydrateDocument()
       if (cancelled) return
+      if (result.phase === 'ready') {
+        setPageSettings(result.pageSettings ?? DEFAULT_PAGE_SETTINGS, { quiet: true })
+      }
       setHydration(result)
       if (result.phase === 'ready' && result.migrationWarning) {
         showToast(result.migrationWarning, 'info')
@@ -149,7 +159,7 @@ export function PersistenceProvider({ children }: { children: ReactNode }) {
           throw new PersistenceError('unavailable', 'Document storage is unavailable.')
         }
         const savedAt = new Date().toISOString()
-        await saveCurrentDocument(html, savedAt)
+        await saveCurrentDocument(html, savedAt, getPageSettings())
         return { savedAt }
       },
       onStatus: (next) => {
@@ -191,6 +201,13 @@ export function PersistenceProvider({ children }: { children: ReactNode }) {
       editor.off('update', onUpdate)
     }
   }, [editor, hydration])
+
+  useEffect(() => {
+    return subscribePageSettingsPersist(() => {
+      coordinatorRef.current?.invalidateSnapshot()
+      coordinatorRef.current?.scheduleSave()
+    })
+  }, [])
 
   useEffect(() => {
     return bindPageLifecycle(() => {
@@ -250,11 +267,13 @@ export function PersistenceProvider({ children }: { children: ReactNode }) {
   const replaceCurrentDocument = useCallback(async (
     nextHtml: string,
     description: string,
+    pageSettings: PageSettings = DEFAULT_PAGE_SETTINGS,
   ): Promise<ReplaceDocumentOutcome> => {
     const coordinator = coordinatorRef.current
     if (!coordinator || !editor) {
       return { ok: false, replaced: false, kind: 'error', message: RECOVERY_BLOCK_MESSAGE }
     }
+    const previous = getPageSettings()
     const result = await runDestructiveReplacement({
       nextHtml,
       description,
@@ -264,9 +283,14 @@ export function PersistenceProvider({ children }: { children: ReactNode }) {
       flushNow,
       createVersion: (desc, html) => createVersion(desc, { html, notify: false }),
       beginDestructiveTransition: () => coordinator.beginDestructiveTransition(),
-      apply: html => applyVerifiedReplacement(editor, html),
+      apply: html => {
+        const applied = applyVerifiedReplacement(editor, html)
+        if (applied) setPageSettings(pageSettings, { quiet: true })
+        return applied
+      },
       flushAfter: flushNow,
     })
+    if (!result.replaced) setPageSettings(previous, { quiet: true })
     if (!result.replaced && result.kind !== 'skipped') {
       showToast(RECOVERY_BLOCK_MESSAGE, 'error')
     }

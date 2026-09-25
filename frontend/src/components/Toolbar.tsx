@@ -17,6 +17,8 @@ import { PageSettingsDialog } from './PageSettingsDialog'
 import { InsertTableDialog } from './InsertTableDialog'
 import { apiFetch } from '../utils/api'
 import { showToast } from './Toast'
+import { requestDocxImport } from '../persistence/importDocx'
+import { getPageSettings } from '../persistence/pageSettings'
 import { usePersistence } from '../persistence/PersistenceContext'
 
 function ToolButton({ onClick, active, children, title }: {
@@ -51,19 +53,6 @@ export function Toolbar() {
   const [linkUrl, setLinkUrl] = useState('')
   const [showLinkInput, setShowLinkInput] = useState(false)
   const linkInputRef = useRef<HTMLInputElement>(null)
-
-  const getPageSettings = () => {
-    const page = document.querySelector('.document-page') as HTMLElement
-    if (!page) return undefined
-    return {
-      width: page.style.width || '210mm',
-      minHeight: page.style.minHeight || '297mm',
-      paddingTop: page.style.paddingTop || '25.4mm',
-      paddingBottom: page.style.paddingBottom || '25.4mm',
-      paddingLeft: page.style.paddingLeft || '25.4mm',
-      paddingRight: page.style.paddingRight || '25.4mm',
-    }
-  }
 
   // Listen for toggle-ai-panel and trigger-export events from keyboard shortcuts
   useEffect(() => {
@@ -120,21 +109,22 @@ export function Toolbar() {
       e.target.value = ''
       return
     }
-    const formData = new FormData()
-    formData.append('file', file)
     try {
-      const res = await apiFetch('/api/import', { method: 'POST', body: formData })
-      const data = await res.json()
-      if (data.html) {
-        const result = await replaceCurrentDocument(data.html, 'Before import')
-        if (!result.replaced) {
-          e.target.value = ''
-          return
-        }
-        const name = file.name.replace(/\.docx$/i, '')
-        setDocumentTitle(name)
-        showToast(`Opened "${file.name}"`, 'success')
+      const imported = await requestDocxImport(file)
+      if (!imported.ok) {
+        showToast(imported.message, 'error')
+        e.target.value = ''
+        return
       }
+      const result = await replaceCurrentDocument(imported.html, 'Before import', imported.pageSettings ?? undefined)
+      if (!result.replaced) {
+        e.target.value = ''
+        return
+      }
+      const name = file.name.replace(/\.docx$/i, '')
+      setDocumentTitle(name)
+      if (imported.warnings.length > 0) showToast(`Opened "${file.name}". ${imported.warnings[0]}`, 'info')
+      else showToast(`Opened "${file.name}"`, 'success')
     } catch {
       showToast('Import failed. Is the backend running?', 'error')
     }

@@ -35,6 +35,7 @@ jobs:
       - run: python3 -m backend.test_continuation
       - run: python3 -m backend.test_credentials
       - run: python3 -m backend.test_desktop_runtime
+      - run: python3 -m backend.test_fidelity
 
   package-macos:
     runs-on: macos-15
@@ -47,6 +48,7 @@ jobs:
           python-version: "3.12"
       - run: bash packaging/build-sidecar.sh
       - run: DOCXEDITOR_SIDECAR_BIN=src-tauri/binaries/docxeditor-backend-aarch64-apple-darwin build/sidecar-venv/bin/python -m backend.test_desktop_runtime
+      - run: build/sidecar-venv/bin/python -m backend.test_fidelity
       - run: cargo test --manifest-path src-tauri/Cargo.toml --lib -- --test-threads=1
       - run: cargo check --manifest-path src-tauri/Cargo.toml
       - uses: actions/upload-artifact@v4
