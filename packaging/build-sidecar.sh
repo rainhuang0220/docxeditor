@@ -9,7 +9,7 @@ if [[ "$TRIPLE" != "aarch64-apple-darwin" ]]; then
 fi
 python3 -m venv build/sidecar-venv
 build/sidecar-venv/bin/pip install -r backend/requirements.txt 'pyinstaller==6.16.0'
-build/sidecar-venv/bin/python -m PyInstaller --noconfirm --clean --onefile --console \
+build/sidecar-venv/bin/python -m PyInstaller --noconfirm --clean --noupx --onefile --console \
   --name docxeditor-backend \
   --target-arch arm64 \
   --distpath build/sidecar \

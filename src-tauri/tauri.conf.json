@@ -54,6 +54,11 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "macOS": {
+      "entitlements": "./Entitlements.plist",
+      "hardenedRuntime": true,
+      "minimumSystemVersion": "11.0"
+    },
     "externalBin": ["binaries/docxeditor-backend"],
     "icon": [
       "icons/32x32.png",

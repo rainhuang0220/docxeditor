@@ -45,6 +45,43 @@ test('24. actual ~6 MiB data-URL document round-trips through production IDB cod
   if (loaded.status === 'ok') assert.equal(loaded.record.html, html)
 })
 
+test('a version 1 document without page settings still loads', async () => {
+  await resetPersistence()
+  const { getDocumentDb } = await import('./db.ts')
+  const db = await getDocumentDb()
+  await db.put('documents', {
+    id: 'current',
+    schemaVersion: 1,
+    html: '<p>written before page settings</p>',
+    savedAt: '2026-09-01T00:00:00.000Z',
+  })
+  const loaded = await loadCurrentDocument()
+  assert.equal(loaded.status, 'ok')
+  if (loaded.status !== 'ok') return
+  assert.equal(loaded.record.html, '<p>written before page settings</p>')
+  assert.equal(loaded.record.pageSettings, undefined)
+  const hydrated = await hydrateDocument()
+  assert.equal(hydrated.phase, 'ready')
+  if (hydrated.phase === 'ready') {
+    assert.equal(hydrated.html, '<p>written before page settings</p>')
+    assert.equal(hydrated.pageSettings, null)
+  }
+})
+
+test('a newer document schema is not opened', async () => {
+  await resetPersistence()
+  const { getDocumentDb } = await import('./db.ts')
+  const db = await getDocumentDb()
+  await db.put('documents', {
+    id: 'current',
+    schemaVersion: 2,
+    html: '<p>future</p>',
+    savedAt: '2026-09-01T00:00:00.000Z',
+  } as never)
+  const loaded = await loadCurrentDocument()
+  assert.equal(loaded.status, 'malformed')
+})
+
 test('malformed durable record is not reinterpreted as valid', async () => {
   await resetPersistence()
   const { getDocumentDb } = await import('./db.ts')

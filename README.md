@@ -60,6 +60,7 @@ A parsed file is not a lossless import. If a supported feature would be lost, th
 - The published v0.1.0 macOS arm64 DMG predates the authenticated sidecar. It does not bundle this backend. Building from current `main` can produce an unsigned Apple Silicon app; that build is not notarized and is not v0.1.0.
 - If the OS keyring is unavailable, a key typed in the app lasts only for the current backend process and is not written to disk
 - No Windows, Linux, or Intel Mac build. No collaboration. No local-model providers yet.
+- Notarization is manual. `.github/workflows/release-macos.yml` does not run on pull requests. If the Apple signing secrets are absent it stops and does not report success. A green test CI run is not a signed or notarized release.
 
 ## Architecture
 
