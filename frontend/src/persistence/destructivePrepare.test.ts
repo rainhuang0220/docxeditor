@@ -289,6 +289,21 @@ test('prepare uses the frozen snapshot, not a later live HTML', async () => {
   resetDocumentMutationLatchForTests()
 })
 
+test('a different legacy document is kept when IndexedDB already has a document', async () => {
+  await resetPersistence()
+  await saveCurrentDocument('<p>current-ok</p>', '2026-09-15T12:00:00.000Z')
+  const legacy = JSON.stringify({ html: '<p>legacy</p>', savedAt: '2026-01-01T00:00:00.000Z' })
+  localStorage.setItem(LEGACY_DOCUMENT_KEY, legacy)
+  const hydration = await hydrateDocument()
+  assert.equal(hydration.phase, 'ready')
+  if (hydration.phase === 'ready') assert.equal(hydration.html, '<p>current-ok</p>')
+  assert.equal(localStorage.getItem(LEGACY_DOCUMENT_KEY), legacy)
+  const same = JSON.stringify({ html: '<p>current-ok</p>', savedAt: '2026-09-15T12:00:00.000Z' })
+  localStorage.setItem(LEGACY_DOCUMENT_KEY, same)
+  await hydrateDocument()
+  assert.equal(localStorage.getItem(LEGACY_DOCUMENT_KEY), null)
+})
+
 test('23. migration warning is observable when legacy versions fail but current document remains usable', async () => {
   await resetPersistence()
   await saveCurrentDocument('<p>current-ok</p>', '2026-09-15T12:00:00.000Z')
@@ -301,5 +316,6 @@ test('23. migration warning is observable when legacy versions fail but current 
     assert.equal(hydration.degraded, false)
     assert.equal(hydration.html, '<p>current-ok</p>')
     assert.ok(hydration.migrationWarning)
+    assert.equal(localStorage.getItem(LEGACY_DOCUMENT_KEY), JSON.stringify({ html: '<p>legacy</p>', savedAt: '2026-01-01T00:00:00.000Z' }))
   }
 })

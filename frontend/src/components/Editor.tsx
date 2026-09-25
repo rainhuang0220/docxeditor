@@ -28,7 +28,7 @@ export function Editor() {
         <div className="mx-auto document-page" style={{ width: '210mm', minHeight: '40vh' }}>
           <p className="text-sm text-[var(--color-danger)] mb-3">{hydration.message}</p>
           <p className="text-sm text-[var(--color-text-tertiary)] mb-4">
-            The saved document was not loaded, so it will not be overwritten.
+            The saved document was not loaded. It stays in place until you start a new document, which replaces that unreadable copy.
           </p>
           <button type="button" className="btn btn-primary" onClick={startNewDocumentFromBlocked}>
             Start new document
