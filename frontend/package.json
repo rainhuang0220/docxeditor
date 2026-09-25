@@ -8,7 +8,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "test": "tsc -p tsconfig.test.json --noEmit && node --experimental-strip-types --import ./src/test/registerDom.ts --test --test-concurrency=1 src/ai/*.test.ts src/persistence/*.test.ts",
+    "test": "tsc -p tsconfig.test.json --noEmit && node --experimental-strip-types --import ./src/test/registerDom.ts --test --test-concurrency=1 src/ai/*.test.ts src/persistence/*.test.ts src/utils/*.test.ts",
     "preview": "vite preview",
     "tauri": "tauri"
   },

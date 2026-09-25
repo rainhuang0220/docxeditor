@@ -201,8 +201,11 @@ pub fn start(shared: &SharedSession) -> Result<(), String> {
         fail(shared, generation, "The bundled backend is missing.");
         return Err("The bundled backend is missing.".to_string());
     };
-    start_at(shared, &path, Duration::from_secs(20))
+    start_at(shared, &path, PACKAGED_READY_TIMEOUT)
 }
+
+/// Cold onefile READY ~26–31s; timeout keeps margin while UI shows progress.
+pub const PACKAGED_READY_TIMEOUT: Duration = Duration::from_secs(45);
 
 pub fn start_at(shared: &SharedSession, path: &std::path::Path, ready_timeout: Duration) -> Result<(), String> {
     {
@@ -355,6 +358,13 @@ fn rand_token() -> [u8; 32] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn packaged_ready_timeout_covers_cold_onefile() {
+        // Measured cold READY ~26–31s; 20s was too short and marked Offline.
+        assert!(PACKAGED_READY_TIMEOUT > Duration::from_secs(31));
+        assert!(PACKAGED_READY_TIMEOUT <= Duration::from_secs(90));
+    }
 
     #[test]
     fn health_json_is_not_a_handshake() {
