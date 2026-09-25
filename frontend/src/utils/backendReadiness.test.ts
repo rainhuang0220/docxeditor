@@ -29,3 +29,17 @@ test('health ready wins even if phase lags; unknown does not look dead', () => {
   assert.equal(backendReadinessView(null, 0, null).label, 'Starting…')
   assert.equal(backendReadinessView(null, 0, null).tone, 'progress')
 })
+
+test('unknown phase stays starting when first health probe fails', () => {
+  // StatusBar fires health and backend_status in parallel; health can lose the race.
+  const view = backendReadinessView(null, 0, false)
+  assert.equal(view.label, 'Starting…')
+  assert.equal(view.tone, 'progress')
+  assert.equal(view.canRetry, false)
+
+  // Once phase is known and not starting, health failure is still Offline.
+  const known = backendReadinessView('unavailable', 0, false)
+  assert.equal(known.label, 'Offline')
+  assert.equal(known.tone, 'failed')
+  assert.equal(known.canRetry, true)
+})

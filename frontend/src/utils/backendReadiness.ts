@@ -58,8 +58,8 @@ export function backendReadinessView(
     }
   }
 
-  // Browser/dev or status not yet known: avoid flashing Offline while we probe.
-  if (phase == null && healthOk == null) {
+  // Status not yet known: avoid flashing offline while health races ahead of phase.
+  if (phase == null) {
     return {
       label: 'Starting…',
       tone: 'progress',
