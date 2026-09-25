@@ -35,26 +35,43 @@ export async function listVersions(): Promise<VersionRecord[]> {
 
 export async function createVersion(record: VersionRecord): Promise<VersionRecord> {
   return enqueue(async () => {
+    const parsed = parseVersionRecord(record)
+    if (!parsed) {
+      throw new PersistenceError('version-write', 'Version save could not be verified.')
+    }
     try {
       const db = await getDocumentDb()
       const tx = db.transaction('versions', 'readwrite')
-      await tx.store.put(record)
-      let count = await tx.store.count()
-      if (count > MAX_VERSIONS) {
-        let cursor = await tx.store.index('by-timestamp').openCursor()
-        while (cursor && count > MAX_VERSIONS) {
-          await cursor.delete()
-          count -= 1
-          cursor = await cursor.continue()
+      // Drop unreadable rows first so they cannot consume MAX_VERSIONS slots.
+      let sweep = await tx.store.openCursor()
+      while (sweep) {
+        if (!parseVersionRecord(sweep.value)) {
+          await sweep.delete()
         }
+        sweep = await sweep.continue()
+      }
+      await tx.store.put(parsed)
+      const raw = await tx.store.getAll()
+      const parseable = raw
+        .map(item => parseVersionRecord(item))
+        .filter((item): item is VersionRecord => item !== null)
+        .sort(newestFirst)
+      for (const excess of parseable.slice(MAX_VERSIONS)) {
+        await tx.store.delete(excess.id)
       }
       await tx.done
     } catch (error) {
       throw wrapStorageError(error, 'version-write')
     }
     const listed = await listVersions()
-    const found = listed.find(item => item.id === record.id)
+    const found = listed.find(item => item.id === parsed.id)
     if (!found) {
+      try {
+        const db = await getDocumentDb()
+        await db.delete('versions', parsed.id)
+      } catch {
+        /* ignore cleanup failure */
+      }
       throw new PersistenceError('version-write', 'Version save could not be verified.')
     }
     return found

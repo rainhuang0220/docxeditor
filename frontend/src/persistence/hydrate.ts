@@ -92,14 +92,15 @@ export async function hydrateDocument(): Promise<HydrationResult> {
         pageSettings: current.record.pageSettings ?? null,
       }
     }
+    // Unreadable legacy with no usable IDB current: block until explicit start-new.
+    // Do not mount the default document or enable autosave overwrite.
     return {
-      phase: 'ready',
+      phase: 'blocked',
       html: null,
       savedAt: null,
-      persistEnabled: true,
+      persistEnabled: false,
       degraded: true,
       message: migration.message,
-      migrationWarning: migration.message,
     }
   }
 

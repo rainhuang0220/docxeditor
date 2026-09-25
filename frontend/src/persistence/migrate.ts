@@ -35,6 +35,16 @@ function removeLegacyKey(key: string): void {
   }
 }
 
+/** True only for a literal empty JSON array — not for non-empty blobs that parse to zero valid records. */
+function isGenuineEmptyVersionsArray(raw: string): boolean {
+  try {
+    const data = JSON.parse(raw) as unknown
+    return Array.isArray(data) && data.length === 0
+  } catch {
+    return false
+  }
+}
+
 function newestFirst(records: VersionRecord[]): VersionRecord[] {
   return [...records].sort((a, b) => {
     const byTime = b.timestamp.localeCompare(a.timestamp)
@@ -123,8 +133,10 @@ export async function migrateLegacyPersistence(): Promise<MigrationResult> {
           } else {
             versionWarning = 'Could not migrate version history.'
           }
-        } else {
+        } else if (isGenuineEmptyVersionsArray(legacyVerRaw)) {
           removeLegacyKey(LEGACY_VERSIONS_KEY)
+        } else {
+          versionWarning = 'Could not migrate version history.'
         }
       }
     } catch (error) {
@@ -189,7 +201,13 @@ export async function migrateLegacyPersistence(): Promise<MigrationResult> {
   }
 
   if (document) removeLegacyKey(LEGACY_DOCUMENT_KEY)
-  if (!versionsParseFailed) removeLegacyKey(LEGACY_VERSIONS_KEY)
+  if (legacyVerRaw) {
+    if (versions.length > 0) {
+      removeLegacyKey(LEGACY_VERSIONS_KEY)
+    } else if (!versionsParseFailed && isGenuineEmptyVersionsArray(legacyVerRaw)) {
+      removeLegacyKey(LEGACY_VERSIONS_KEY)
+    }
+  }
 
   return {
     status: 'migrated',
