@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Minus, Plus, Target } from 'lucide-react'
 import { useEditorContext } from '../context/EditorContext'
-import { apiFetch, retryBackend } from '../utils/api'
+import { apiFetch, fetchBackendStatus, retryBackend } from '../utils/api'
+import { backendReadinessView } from '../utils/backendReadiness'
 import { usePersistence } from '../persistence/PersistenceContext'
 import { formatPersistenceStatus } from '../persistence/status'
 
@@ -10,22 +11,62 @@ export function StatusBar() {
   const { status: persistenceStatus } = usePersistence()
   const [zoom, setZoom] = useState(100)
   const [, forceUpdate] = useState(0)
-  const [backendOnline, setBackendOnline] = useState<boolean | null>(null)
+  const [phase, setPhase] = useState<string | null>(null)
+  const [healthOk, setHealthOk] = useState<boolean | null>(null)
+  const [elapsedMs, setElapsedMs] = useState(0)
+  const waitStartedAt = useRef<number | null>(null)
   const [wordGoal, setWordGoal] = useState<number | null>(() => {
     const stored = localStorage.getItem('ai-doc-ide-word-goal')
     return stored ? parseInt(stored) : null
   })
 
   useEffect(() => {
-    const checkBackend = () => {
+    let cancelled = false
+    const refresh = () => {
+      void fetchBackendStatus()
+        .then((status) => {
+          if (cancelled) return
+          setPhase(status?.phase ?? null)
+        })
+        .catch(() => {
+          if (!cancelled) setPhase(null)
+        })
       apiFetch('/api/health')
-        .then(res => setBackendOnline(res.ok))
-        .catch(() => setBackendOnline(false))
+        .then((res) => {
+          if (!cancelled) setHealthOk(res.ok)
+        })
+        .catch(() => {
+          if (!cancelled) setHealthOk(false)
+        })
     }
-    checkBackend()
-    const interval = setInterval(checkBackend, 15000)
-    return () => clearInterval(interval)
+    refresh()
+    const interval = setInterval(refresh, 1500)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
   }, [])
+
+  useEffect(() => {
+    const waiting = phase === 'starting' || phase === 'authenticating'
+    if (waiting) {
+      if (waitStartedAt.current == null) waitStartedAt.current = Date.now()
+    } else if (phase === 'ready' || phase === 'failed' || phase === 'unavailable' || phase === 'stopped') {
+      waitStartedAt.current = null
+      setElapsedMs(0)
+    }
+  }, [phase])
+
+  useEffect(() => {
+    if (phase !== 'starting' && phase !== 'authenticating') return
+    const tick = () => {
+      const started = waitStartedAt.current
+      if (started != null) setElapsedMs(Date.now() - started)
+    }
+    tick()
+    const id = setInterval(tick, 500)
+    return () => clearInterval(id)
+  }, [phase])
 
   // Re-render on selection/content changes
   const handleUpdate = useCallback(() => forceUpdate(n => n + 1), [])
@@ -47,6 +88,8 @@ export function StatusBar() {
   }, [zoom])
 
   if (!editor) return null
+
+  const readiness = backendReadinessView(phase, elapsedMs, healthOk)
 
   const { from, to } = editor.state.selection
   const text = editor.state.doc.textContent
@@ -72,6 +115,19 @@ export function StatusBar() {
       if (pos <= from) currentLine = idx
     }
   })
+
+  const toneClass =
+    readiness.tone === 'ready'
+      ? 'text-[var(--color-success)]'
+      : readiness.tone === 'failed'
+        ? 'text-[var(--color-danger)]'
+        : 'text-[var(--color-text-secondary)]'
+  const dotClass =
+    readiness.tone === 'ready'
+      ? 'bg-[var(--color-success)]'
+      : readiness.tone === 'failed'
+        ? 'bg-[var(--color-danger)]'
+        : 'bg-[var(--color-text-secondary)]'
 
   return (
     <div className="flex items-center gap-3 px-4 h-7 border-t border-[var(--color-border)] bg-[var(--color-surface)] font-mono text-[10.5px] text-[var(--color-text-tertiary)] uppercase tracking-[0.06em]" role="status" aria-label="Document statistics">
@@ -110,17 +166,24 @@ export function StatusBar() {
       </span>
       <button
         type="button"
-        className={`flex items-center gap-1.5 normal-case tracking-normal ${backendOnline ? 'text-[var(--color-success)]' : 'text-[var(--color-danger)]'}`}
-        title={backendOnline ? 'Backend connected' : 'Backend offline. Retry starts a new backend.'}
+        className={`flex items-center gap-1.5 normal-case tracking-normal ${toneClass}`}
+        title={readiness.title}
+        data-backend-phase={phase ?? ''}
+        data-backend-tone={readiness.tone}
         onClick={() => {
-          if (backendOnline) return
+          if (!readiness.canRetry) return
+          waitStartedAt.current = Date.now()
+          setElapsedMs(0)
+          setPhase('starting')
+          setHealthOk(null)
           void retryBackend().finally(() => {
-            apiFetch('/api/health').then(res => setBackendOnline(res.ok)).catch(() => setBackendOnline(false))
+            void fetchBackendStatus().then((status) => setPhase(status?.phase ?? null)).catch(() => setPhase('failed'))
+            apiFetch('/api/health').then(res => setHealthOk(res.ok)).catch(() => setHealthOk(false))
           })
         }}
       >
-        <span className={`w-1.5 h-1.5 ${backendOnline ? 'bg-[var(--color-success)]' : 'bg-[var(--color-danger)]'}`} />
-        {backendOnline ? 'AI Ready' : 'Offline'}
+        <span className={`w-1.5 h-1.5 ${dotClass}`} />
+        {readiness.label}
       </button>
       <div className="flex items-center gap-0.5">
         <button

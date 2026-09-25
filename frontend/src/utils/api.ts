@@ -280,3 +280,11 @@ export async function retryBackend(): Promise<void> {
   const { invoke } = await import('@tauri-apps/api/core')
   await invoke('backend_retry')
 }
+
+export type BackendStatusPayload = { phase: string; detail: string }
+
+export async function fetchBackendStatus(): Promise<BackendStatusPayload | null> {
+  if (!isTauri()) return null
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<BackendStatusPayload>('backend_status')
+}
