@@ -17,6 +17,7 @@ import { PageSettingsDialog } from './PageSettingsDialog'
 import { InsertTableDialog } from './InsertTableDialog'
 import { apiFetch } from '../utils/api'
 import { showToast } from './Toast'
+import { DOCX_FILE_ACCEPT, isDocxFileCandidate } from '../persistence/docxFileAccept'
 import { requestDocxImport } from '../persistence/importDocx'
 import { getPageSettings } from '../persistence/pageSettings'
 import { usePersistence } from '../persistence/PersistenceContext'
@@ -104,7 +105,15 @@ export function Toolbar() {
 
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
-    if (!file) return
+    if (!file) {
+      e.target.value = ''
+      return
+    }
+    if (!isDocxFileCandidate(file)) {
+      showToast('Choose a .docx file.', 'error')
+      e.target.value = ''
+      return
+    }
     if (!guardSession('mutateDocument')) {
       e.target.value = ''
       return
@@ -362,12 +371,14 @@ export function Toolbar() {
 
       <div className="flex-1" />
 
-      {/* Import DOCX */}
+      {/* Import DOCX — accept left open; candidacy checked in onChange */}
       <input
         ref={fileInputRef}
         type="file"
-        accept=".docx"
-        className="hidden"
+        accept={DOCX_FILE_ACCEPT || undefined}
+        className="absolute w-px h-px p-0 -m-px overflow-hidden whitespace-nowrap border-0 opacity-0"
+        tabIndex={-1}
+        aria-hidden="true"
         onChange={handleImport}
       />
       <ToolButton onClick={() => fileInputRef.current?.click()} title="Open DOCX">

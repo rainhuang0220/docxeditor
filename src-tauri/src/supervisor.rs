@@ -43,6 +43,8 @@ pub struct Session {
     pub port: u16,
     pub token: Vec<u8>,
     pub generation: u64,
+    /// True while spawn/bootstrap runs before the child is stored in `child`.
+    launching: bool,
     child: Option<Child>,
     stdin: Option<std::process::ChildStdin>,
 }
@@ -55,6 +57,7 @@ impl Session {
             port: 0,
             token: Vec::new(),
             generation: 0,
+            launching: false,
             child: None,
             stdin: None,
         }
@@ -156,16 +159,40 @@ fn terminate_group(mut child: Child, stdin: Option<std::process::ChildStdin>) {
 }
 
 fn fail(shared: &SharedSession, generation: u64, detail: &str) {
-    let mut session = shared.lock().expect("session");
-    if session.generation != generation {
-        return;
+    let owned = {
+        let mut session = shared.lock().expect("session");
+        if session.generation != generation {
+            return;
+        }
+        session.phase = Phase::Failed;
+        session.detail = detail.to_string();
+        session.port = 0;
+        session.token.clear();
+        session.launching = false;
+        let child = session.child.take();
+        let stdin = session.stdin.take();
+        child.map(|child| (child, stdin))
+    };
+    if let Some((child, stdin)) = owned {
+        terminate_group(child, stdin);
     }
-    session.phase = Phase::Failed;
-    session.detail = detail.to_string();
-    session.port = 0;
-    session.token.clear();
-    session.child = None;
-    session.stdin = None;
+}
+
+/// App setup schedules an async start; surface Starting before the first status poll.
+pub fn mark_startup_scheduled(shared: &SharedSession) {
+    let mut session = shared.lock().expect("session");
+    if session.phase == Phase::Stopped {
+        session.generation = session.generation.wrapping_add(1);
+        session.phase = Phase::Starting;
+        session.detail.clear();
+        session.launching = false;
+    }
+}
+
+fn startup_already_owned(session: &Session) -> bool {
+    matches!(session.phase, Phase::Authenticating | Phase::Ready)
+        || session.child.is_some()
+        || session.launching
 }
 
 pub fn stop(shared: &SharedSession) {
@@ -173,6 +200,7 @@ pub fn stop(shared: &SharedSession) {
         let mut session = shared.lock().expect("session");
         session.generation = session.generation.wrapping_add(1);
         session.phase = Phase::Stopping;
+        session.launching = false;
         let generation = session.generation;
         let child = session.child.take();
         let stdin = session.stdin.take();
@@ -188,6 +216,7 @@ pub fn stop(shared: &SharedSession) {
         session.phase = Phase::Stopped;
         session.token.clear();
         session.port = 0;
+        session.launching = false;
     }
 }
 
@@ -195,7 +224,10 @@ pub fn start(shared: &SharedSession) -> Result<(), String> {
     let Some(path) = sidecar_path() else {
         let generation = {
             let mut session = shared.lock().expect("session");
-            session.generation = session.generation.wrapping_add(1);
+            if session.phase != Phase::Starting {
+                session.generation = session.generation.wrapping_add(1);
+            }
+            session.launching = false;
             session.generation
         };
         fail(shared, generation, "The bundled backend is missing.");
@@ -210,7 +242,7 @@ pub const PACKAGED_READY_TIMEOUT: Duration = Duration::from_secs(75);
 pub fn start_at(shared: &SharedSession, path: &std::path::Path, ready_timeout: Duration) -> Result<(), String> {
     {
         let session = shared.lock().expect("session");
-        if matches!(session.phase, Phase::Starting | Phase::Authenticating | Phase::Ready) {
+        if startup_already_owned(&session) {
             return Ok(());
         }
         let occupied = session.child.is_some();
@@ -221,14 +253,17 @@ pub fn start_at(shared: &SharedSession, path: &std::path::Path, ready_timeout: D
     }
     let generation = {
         let mut session = shared.lock().expect("session");
-        if matches!(session.phase, Phase::Starting | Phase::Authenticating | Phase::Ready) {
+        if startup_already_owned(&session) {
             return Ok(());
         }
-        session.generation = session.generation.wrapping_add(1);
-        session.phase = Phase::Starting;
-        session.detail.clear();
-        session.port = 0;
-        session.token.clear();
+        if session.phase != Phase::Starting {
+            session.generation = session.generation.wrapping_add(1);
+            session.phase = Phase::Starting;
+            session.detail.clear();
+            session.port = 0;
+            session.token.clear();
+        }
+        session.launching = true;
         session.generation
     };
     let token = rand_token();
@@ -263,6 +298,7 @@ pub fn start_at(shared: &SharedSession, path: &std::path::Path, ready_timeout: D
         fail(shared, generation, "The backend pipe could not be opened.");
         return Err("The backend pipe could not be opened.".to_string());
     }
+    // Own the child before blocking on READY so stop/retry can reap it mid-auth.
     {
         let mut session = shared.lock().expect("session");
         if session.generation != generation {
@@ -271,36 +307,34 @@ pub fn start_at(shared: &SharedSession, path: &std::path::Path, ready_timeout: D
             return Err("The backend startup was replaced.".to_string());
         }
         session.phase = Phase::Authenticating;
+        session.child = Some(child);
+        session.stdin = Some(stdin);
+        session.launching = false;
     }
     let port = match read_ready(stdout, &token, ready_timeout) {
         Some(port) => port,
         None => {
-            terminate_group(child, Some(stdin));
             fail(shared, generation, "The backend did not authenticate.");
             return Err("The backend did not authenticate.".to_string());
         }
     };
     if !still_current(shared, generation) {
-        terminate_group(child, Some(stdin));
+        // stop() already reaped this generation's child when it bumped ownership.
         return Err("The backend startup was replaced.".to_string());
     }
     if !probe_health(port, &token) {
-        terminate_group(child, Some(stdin));
         fail(shared, generation, "The backend did not become ready.");
         return Err("The backend did not become ready.".to_string());
     }
     let mut session = shared.lock().expect("session");
     if session.generation != generation {
-        drop(session);
-        terminate_group(child, Some(stdin));
         return Err("The backend startup was replaced.".to_string());
     }
     session.port = port;
     session.token = token.to_vec();
-    session.child = Some(child);
-    session.stdin = Some(stdin);
     session.phase = Phase::Ready;
     session.detail.clear();
+    session.launching = false;
     Ok(())
 }
 
@@ -495,7 +529,7 @@ mod tests {
         let _ = std::fs::remove_file(&barrier);
         let _ = std::fs::remove_file(&release);
         let (_dir, path) = script(&format!(
-            "import os, time\nopen({}, 'w').write('up')\nwhile not os.path.exists({}):\n    time.sleep(0.01)\nraise SystemExit(0)\n",
+            "import os, time, sys\nline = sys.stdin.readline()\nopen({}, 'w').write('up')\nwhile not os.path.exists({}):\n    time.sleep(0.01)\nraise SystemExit(0)\n",
             py_quote(&barrier),
             py_quote(&release),
         ));
@@ -562,5 +596,157 @@ mod tests {
         assert!(session.token.is_empty());
         assert_eq!(session.port, 0);
         assert!(session.child.is_none());
+    }
+
+    #[test]
+    fn scheduled_startup_is_starting_before_spawn() {
+        let shared = Mutex::new(Session::new());
+        assert_eq!(shared.lock().unwrap().phase, Phase::Stopped);
+        mark_startup_scheduled(&shared);
+        assert_eq!(shared.lock().unwrap().phase, Phase::Starting);
+        // Scheduled Starting must not block the real spawn (no owned child yet).
+        let pidfile = std::env::temp_dir().join(format!("docxeditor-sched-{}", std::process::id()));
+        let (_dir, path) = script(&format!(
+            "import os\nopen({:?}, 'w').write(str(os.getpid()))\nraise SystemExit(3)\n",
+            pidfile
+        ));
+        let error = start_at(&shared, &path, Duration::from_secs(2)).unwrap_err();
+        assert!(error.contains("did not authenticate") || error.contains("pipe"));
+        assert_eq!(shared.lock().unwrap().phase, Phase::Failed);
+        stop(&shared);
+        assert_eq!(shared.lock().unwrap().phase, Phase::Stopped);
+        let _ = std::fs::remove_file(pidfile);
+    }
+
+    #[test]
+    fn concurrent_retry_while_blocked_before_ready_keeps_one_sidecar() {
+        let pid_log = std::env::temp_dir().join(format!(
+            "docxeditor-retry-pids-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let barrier = std::env::temp_dir().join(format!(
+            "docxeditor-retry-barrier-{}",
+            std::process::id()
+        ));
+        let release = std::env::temp_dir().join(format!(
+            "docxeditor-retry-release-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&pid_log);
+        let _ = std::fs::remove_file(&barrier);
+        let _ = std::fs::remove_file(&release);
+
+        // Fake sidecar: consume bootstrap, record pid, park before READY until release.
+        // Keep indented blocks on the same physical line after \\n — Rust string
+        // continuations strip leading whitespace on the next source line.
+        let (_dir, path) = script(&format!(
+            "import hashlib, hmac, os, socket, sys, time\n\
+line = sys.stdin.readline().strip().split()\n\
+token = bytes.fromhex(line[1])\n\
+open({pid}, 'a').write(str(os.getpid()) + '\\n')\n\
+open({barrier}, 'w').write('blocked')\n\
+while not os.path.exists({release}):\n    time.sleep(0.01)\n\
+sock = socket.socket(); sock.bind(('127.0.0.1', 0)); sock.listen(1)\n\
+port = sock.getsockname()[1]\n\
+mac = hmac.new(token, f'ready-v1\\n{{port}}'.encode(), hashlib.sha256).hexdigest()\n\
+print(f'READY v1 {{port}} {{mac}}', flush=True)\n\
+conn, _ = sock.accept()\n\
+data = b''\n\
+while b'\\r\\n\\r\\n' not in data:\n    data += conn.recv(4096)\n\
+conn.sendall(b'HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\nConnection: close\\r\\n\\r\\nOK')\n\
+time.sleep(30)\n",
+            pid = py_quote(&pid_log),
+            barrier = py_quote(&barrier),
+            release = py_quote(&release),
+        ));
+
+        let shared = std::sync::Arc::new(Mutex::new(Session::new()));
+        let worker = shared.clone();
+        let binary = path.clone();
+        let first = std::thread::spawn(move || start_at(&worker, &binary, Duration::from_secs(8)));
+
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !barrier.exists() {
+            if first.is_finished() {
+                let err = first.join().unwrap().unwrap_err();
+                panic!(
+                    "first start ended before barrier: {err}\nscript:\n{}",
+                    std::fs::read_to_string(&path).unwrap_or_default()
+                );
+            }
+            assert!(
+                Instant::now() < deadline,
+                "first sidecar never reached the pre-READY barrier\nphase={:?}\nscript:\n{}",
+                shared.lock().unwrap().phase,
+                std::fs::read_to_string(&path).unwrap_or_default()
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        {
+            let session = shared.lock().unwrap();
+            assert_eq!(session.phase, Phase::Authenticating);
+            assert!(
+                session.child.is_some(),
+                "authenticating sidecar must be owned so stop/retry can reap it"
+            );
+        }
+
+        let retry_a = {
+            let shared = shared.clone();
+            let path = path.clone();
+            std::thread::spawn(move || {
+                stop(&shared);
+                start_at(&shared, &path, Duration::from_secs(8))
+            })
+        };
+        let retry_b = {
+            let shared = shared.clone();
+            let path = path.clone();
+            std::thread::spawn(move || {
+                stop(&shared);
+                start_at(&shared, &path, Duration::from_secs(8))
+            })
+        };
+
+        // Let both retries race while the first child is still blocked pre-READY.
+        std::thread::sleep(Duration::from_millis(80));
+        std::fs::write(&release, "go").unwrap();
+
+        let _ = first.join().unwrap();
+        let _ = retry_a.join().unwrap();
+        let _ = retry_b.join().unwrap();
+
+        let session = shared.lock().unwrap();
+        assert_eq!(session.phase, Phase::Ready, "detail={}", session.detail);
+        assert!(session.child.is_some());
+        let owner_generation = session.generation;
+        let owner_pid = session.child.as_ref().map(|child| child.id());
+        drop(session);
+
+        let recorded: Vec<u32> = std::fs::read_to_string(&pid_log)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| line.trim().parse().ok())
+            .collect();
+        assert!(!recorded.is_empty(), "expected at least one spawned sidecar");
+        let live: Vec<u32> = recorded.into_iter().filter(|pid| alive(*pid)).collect();
+        assert_eq!(
+            live.len(),
+            1,
+            "repeated retry must leave exactly one live sidecar, got {live:?}"
+        );
+        assert_eq!(Some(live[0]), owner_pid);
+        assert!(owner_generation >= 1);
+
+        stop(&shared);
+        assert_eq!(shared.lock().unwrap().phase, Phase::Stopped);
+        assert!(!alive(live[0]), "quit/stop must reap the owned process group");
+        let _ = std::fs::remove_file(&pid_log);
+        let _ = std::fs::remove_file(&barrier);
+        let _ = std::fs::remove_file(&release);
     }
 }

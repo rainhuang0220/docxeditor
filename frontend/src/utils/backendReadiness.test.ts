@@ -43,3 +43,41 @@ test('unknown phase stays starting when first health probe fails', () => {
   assert.equal(known.tone, 'failed')
   assert.equal(known.canRetry, true)
 })
+
+test('first rendered frame with no status yet is Starting, not Offline', () => {
+  const frame = backendReadinessView(null, 0, null)
+  assert.equal(frame.label, 'Starting…')
+  assert.equal(frame.tone, 'progress')
+  assert.equal(frame.canRetry, false)
+})
+
+test('starting and authenticating disable Retry even when health is false', () => {
+  for (const phase of ['starting', 'authenticating'] as const) {
+    const view = backendReadinessView(phase, 100, false)
+    assert.equal(view.canRetry, false, phase)
+    assert.equal(view.tone, 'progress', phase)
+  }
+})
+
+test('actual startup failure is Offline with Retry', () => {
+  const view = backendReadinessView('failed', 12_000, false)
+  assert.equal(view.label, 'Offline')
+  assert.equal(view.tone, 'failed')
+  assert.equal(view.canRetry, true)
+})
+
+test('post-start shutdown stopped is Offline, not Starting', () => {
+  // A genuine stop after Ready must stay Offline; do not map every stopped to Starting.
+  const view = backendReadinessView('stopped', 0, false)
+  assert.equal(view.label, 'Offline')
+  assert.equal(view.tone, 'failed')
+  assert.equal(view.canRetry, true)
+})
+
+test('scheduled startup phase starting stays Starting before first health ok', () => {
+  // Supervisor reports starting once startup is scheduled; first poll must not flash Offline.
+  const view = backendReadinessView('starting', 0, false)
+  assert.equal(view.label, 'Starting…')
+  assert.equal(view.tone, 'progress')
+  assert.equal(view.canRetry, false)
+})

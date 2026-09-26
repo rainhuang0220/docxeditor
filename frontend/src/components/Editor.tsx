@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { useEditorContext } from '../context/EditorContext'
 import { saveHeaderFooter, loadHeaderFooter } from '../utils/storage'
 import { showToast } from './Toast'
+import { isDocxFileCandidate } from '../persistence/docxFileAccept'
 import { requestDocxImport } from '../persistence/importDocx'
 import { getPageSettings, subscribePageStyle, toPageStyle } from '../persistence/pageSettings'
 import { usePersistence } from '../persistence/PersistenceContext'
@@ -77,7 +78,7 @@ function EditorInner({ initialHtml }: { initialHtml: string }) {
     e.preventDefault()
     setIsDragging(false)
     const file = e.dataTransfer.files[0]
-    if (!file || !file.name.endsWith('.docx')) return
+    if (!file || !isDocxFileCandidate(file)) return
     if (!guardSession('mutateDocument')) return
     try {
       const imported = await requestDocxImport(file)
