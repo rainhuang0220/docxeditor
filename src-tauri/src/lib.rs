@@ -144,6 +144,9 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
             let watch = handle.clone();
+            if let Some(state) = handle.try_state::<AppState>() {
+                supervisor::mark_startup_scheduled(&state.session);
+            }
             std::thread::spawn(move || {
                 if let Some(state) = handle.try_state::<AppState>() {
                     let _ = supervisor::start(&state.session);
