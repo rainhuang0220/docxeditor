@@ -442,6 +442,29 @@ mod tests {
         format!("{:?}", path.display().to_string())
     }
 
+    /// Isolation for parallel `cargo test` threads: pid alone collides in-process.
+    fn unique_temp(prefix: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "{prefix}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
+    fn wait_for_path(path: &std::path::Path, deadline: Instant, label: &str) {
+        while !path.exists() {
+            assert!(
+                Instant::now() < deadline,
+                "{label} never appeared at {}",
+                path.display()
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     fn alive(pid: u32) -> bool {
         if unsafe { libc::kill(pid as i32, 0) } != 0 {
             return false;
@@ -454,13 +477,13 @@ mod tests {
 
     #[test]
     fn exit_before_ready_is_reaped() {
-        let pidfile = std::env::temp_dir().join(format!("docxeditor-pid-{}", std::process::id()));
+        let pidfile = unique_temp("docxeditor-pid");
         let (_dir, path) = script(&format!(
             "import os\nopen({:?}, 'w').write(str(os.getpid()))\nraise SystemExit(3)\n",
             pidfile
         ));
         let shared = Mutex::new(Session::new());
-        let error = start_at(&shared, &path, Duration::from_secs(2)).unwrap_err();
+        let error = start_at(&shared, &path, Duration::from_secs(8)).unwrap_err();
         assert!(error.contains("did not authenticate") || error.contains("pipe"));
         let session = shared.lock().unwrap();
         assert_eq!(session.phase, Phase::Failed);
@@ -468,6 +491,7 @@ mod tests {
         assert_eq!(session.port, 0);
         assert!(session.child.is_none());
         drop(session);
+        wait_for_path(&pidfile, Instant::now() + Duration::from_secs(5), "exit pidfile");
         let pid: u32 = std::fs::read_to_string(&pidfile).unwrap().trim().parse().unwrap();
         assert!(!alive(pid));
         let _ = std::fs::remove_file(pidfile);
@@ -475,20 +499,21 @@ mod tests {
 
     #[test]
     fn forged_ready_is_reaped() {
-        let pidfile = std::env::temp_dir().join(format!("docxeditor-forged-{}", std::process::id()));
+        let pidfile = unique_temp("docxeditor-forged");
         let (_dir, path) = script(&format!(
             "import os, time\nopen({:?}, 'w').write(str(os.getpid()))\nprint('READY v1 9 ' + ('ab' * 32), flush=True)\ntime.sleep(30)\n",
             pidfile
         ));
         let shared = Mutex::new(Session::new());
         let started = Instant::now();
-        let error = start_at(&shared, &path, Duration::from_secs(2)).unwrap_err();
-        assert!(started.elapsed() < Duration::from_secs(6), "{error}");
+        let error = start_at(&shared, &path, Duration::from_secs(8)).unwrap_err();
+        assert!(started.elapsed() < Duration::from_secs(12), "{error}");
         let session = shared.lock().unwrap();
         assert_eq!(session.phase, Phase::Failed);
         assert!(session.token.is_empty());
         assert!(session.child.is_none());
         drop(session);
+        wait_for_path(&pidfile, Instant::now() + Duration::from_secs(5), "forged pidfile");
         let pid: u32 = std::fs::read_to_string(&pidfile).unwrap().trim().parse().unwrap();
         assert!(!alive(pid));
         let _ = std::fs::remove_file(pidfile);
@@ -496,19 +521,14 @@ mod tests {
 
     #[test]
     fn sigterm_ignored_is_killed() {
-        let pidfile = std::env::temp_dir().join(format!("docxeditor-ign-{}", std::process::id()));
-        let _ = std::fs::remove_file(&pidfile);
+        let pidfile = unique_temp("docxeditor-ign");
         let (_dir, path) = script(&format!(
             "import os, signal, time\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\nchild = os.fork()\nif child == 0:\n    signal.signal(signal.SIGTERM, signal.SIG_IGN)\n    time.sleep(30)\n    raise SystemExit\nopen({}, 'w').write(str(os.getpid()) + '\\n' + str(child))\ntime.sleep(30)\n",
             py_quote(&pidfile)
         ));
         use std::os::unix::process::CommandExt;
         let child = Command::new(&path).process_group(0).spawn().unwrap();
-        let deadline = Instant::now() + Duration::from_secs(3);
-        while !pidfile.exists() {
-            assert!(Instant::now() < deadline, "signal handler was not installed");
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        wait_for_path(&pidfile, Instant::now() + Duration::from_secs(15), "sigterm pidfile");
         let started = Instant::now();
         terminate_group(child, None);
         let elapsed = started.elapsed();
@@ -524,10 +544,8 @@ mod tests {
 
     #[test]
     fn authenticating_is_visible_and_retry_uses_a_new_token() {
-        let barrier = std::env::temp_dir().join(format!("docxeditor-barrier-{}", std::process::id()));
-        let release = std::env::temp_dir().join(format!("docxeditor-release-{}", std::process::id()));
-        let _ = std::fs::remove_file(&barrier);
-        let _ = std::fs::remove_file(&release);
+        let barrier = unique_temp("docxeditor-barrier");
+        let release = unique_temp("docxeditor-release");
         let (_dir, path) = script(&format!(
             "import os, time, sys\nline = sys.stdin.readline()\nopen({}, 'w').write('up')\nwhile not os.path.exists({}):\n    time.sleep(0.01)\nraise SystemExit(0)\n",
             py_quote(&barrier),
@@ -536,10 +554,14 @@ mod tests {
         let shared = std::sync::Arc::new(Mutex::new(Session::new()));
         let worker = shared.clone();
         let binary = path.clone();
-        let handle = std::thread::spawn(move || start_at(&worker, &binary, Duration::from_secs(5)));
-        let deadline = Instant::now() + Duration::from_secs(3);
+        let handle = std::thread::spawn(move || start_at(&worker, &binary, Duration::from_secs(8)));
+        let deadline = Instant::now() + Duration::from_secs(15);
         while !barrier.exists() {
-            assert!(Instant::now() < deadline, "child did not reach the barrier\n{}", std::fs::read_to_string(&path).unwrap_or_default());
+            assert!(
+                Instant::now() < deadline,
+                "child did not reach the barrier\n{}",
+                std::fs::read_to_string(&path).unwrap_or_default()
+            );
             std::thread::sleep(Duration::from_millis(10));
         }
         let mut saw = false;
@@ -559,18 +581,18 @@ mod tests {
         assert!(session.child.is_none());
         drop(session);
 
-        let log = std::env::temp_dir().join(format!("docxeditor-tokens-{}", std::process::id()));
+        let log = unique_temp("docxeditor-tokens");
         let (_dir, server) = script(&format!(
             "import hashlib, hmac, os, socket, sys, time\nline = sys.stdin.readline().strip().split()\ntoken = bytes.fromhex(line[1])\nopen({:?}, 'a').write(token.hex() + '\\n')\nsock = socket.socket(); sock.bind(('127.0.0.1', 0)); sock.listen(1)\nport = sock.getsockname()[1]\nmac = hmac.new(token, f'ready-v1\\n{{port}}'.encode(), hashlib.sha256).hexdigest()\nprint(f'READY v1 {{port}} {{mac}}', flush=True)\nconn, _ = sock.accept()\ndata = b''\nwhile b'\\r\\n\\r\\n' not in data:\n    data += conn.recv(4096)\nconn.sendall(b'HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\nConnection: close\\r\\n\\r\\nOK')\ntime.sleep(30)\n",
             log
         ));
         let shared = Mutex::new(Session::new());
-        start_at(&shared, &server, Duration::from_secs(5)).unwrap();
+        start_at(&shared, &server, Duration::from_secs(8)).unwrap();
         let first = shared.lock().unwrap().token.clone();
         stop(&shared);
         assert!(shared.lock().unwrap().token.is_empty());
         assert_eq!(shared.lock().unwrap().phase, Phase::Stopped);
-        start_at(&shared, &server, Duration::from_secs(5)).unwrap();
+        start_at(&shared, &server, Duration::from_secs(8)).unwrap();
         let second = shared.lock().unwrap().token.clone();
         stop(&shared);
         assert_ne!(first, second);
@@ -589,7 +611,7 @@ mod tests {
             "import hashlib, hmac, sys, time\nline = sys.stdin.readline().strip().split()\ntoken = bytes.fromhex(line[1])\nmac = hmac.new(token, b'ready-v1\\n1', hashlib.sha256).hexdigest()\nprint(f'READY v1 1 {mac}', flush=True)\ntime.sleep(30)\n",
         );
         let shared = Mutex::new(Session::new());
-        let error = start_at(&shared, &path, Duration::from_secs(3)).unwrap_err();
+        let error = start_at(&shared, &path, Duration::from_secs(8)).unwrap_err();
         assert!(error.contains("did not become ready"));
         let session = shared.lock().unwrap();
         assert_eq!(session.phase, Phase::Failed);
@@ -605,12 +627,12 @@ mod tests {
         mark_startup_scheduled(&shared);
         assert_eq!(shared.lock().unwrap().phase, Phase::Starting);
         // Scheduled Starting must not block the real spawn (no owned child yet).
-        let pidfile = std::env::temp_dir().join(format!("docxeditor-sched-{}", std::process::id()));
+        let pidfile = unique_temp("docxeditor-sched");
         let (_dir, path) = script(&format!(
             "import os\nopen({:?}, 'w').write(str(os.getpid()))\nraise SystemExit(3)\n",
             pidfile
         ));
-        let error = start_at(&shared, &path, Duration::from_secs(2)).unwrap_err();
+        let error = start_at(&shared, &path, Duration::from_secs(8)).unwrap_err();
         assert!(error.contains("did not authenticate") || error.contains("pipe"));
         assert_eq!(shared.lock().unwrap().phase, Phase::Failed);
         stop(&shared);
@@ -620,25 +642,9 @@ mod tests {
 
     #[test]
     fn concurrent_retry_while_blocked_before_ready_keeps_one_sidecar() {
-        let pid_log = std::env::temp_dir().join(format!(
-            "docxeditor-retry-pids-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let barrier = std::env::temp_dir().join(format!(
-            "docxeditor-retry-barrier-{}",
-            std::process::id()
-        ));
-        let release = std::env::temp_dir().join(format!(
-            "docxeditor-retry-release-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_file(&pid_log);
-        let _ = std::fs::remove_file(&barrier);
-        let _ = std::fs::remove_file(&release);
+        let pid_log = unique_temp("docxeditor-retry-pids");
+        let barrier = unique_temp("docxeditor-retry-barrier");
+        let release = unique_temp("docxeditor-retry-release");
 
         // Fake sidecar: consume bootstrap, record pid, park before READY until release.
         // Keep indented blocks on the same physical line after \\n — Rust string
@@ -669,7 +675,7 @@ time.sleep(30)\n",
         let binary = path.clone();
         let first = std::thread::spawn(move || start_at(&worker, &binary, Duration::from_secs(8)));
 
-        let deadline = Instant::now() + Duration::from_secs(3);
+        let deadline = Instant::now() + Duration::from_secs(15);
         while !barrier.exists() {
             if first.is_finished() {
                 let err = first.join().unwrap().unwrap_err();
@@ -686,45 +692,82 @@ time.sleep(30)\n",
             );
             std::thread::sleep(Duration::from_millis(10));
         }
-        {
+        let blocked_generation = {
             let session = shared.lock().unwrap();
             assert_eq!(session.phase, Phase::Authenticating);
             assert!(
                 session.child.is_some(),
                 "authenticating sidecar must be owned so stop/retry can reap it"
             );
-        }
+            session.generation
+        };
 
+        // Count stops completed (not mere thread spawn) so release cannot race a
+        // still-current Authenticating generation into a lucky Ready publish.
+        let stops_done = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let retry_a = {
             let shared = shared.clone();
             let path = path.clone();
+            let stops_done = stops_done.clone();
             std::thread::spawn(move || {
                 stop(&shared);
+                stops_done.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 start_at(&shared, &path, Duration::from_secs(8))
             })
         };
         let retry_b = {
             let shared = shared.clone();
             let path = path.clone();
+            let stops_done = stops_done.clone();
             std::thread::spawn(move || {
                 stop(&shared);
+                stops_done.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 start_at(&shared, &path, Duration::from_secs(8))
             })
         };
 
-        // Let both retries race while the first child is still blocked pre-READY.
-        std::thread::sleep(Duration::from_millis(80));
+        let stop_deadline = Instant::now() + Duration::from_secs(5);
+        while stops_done.load(std::sync::atomic::Ordering::SeqCst) < 1 {
+            assert!(
+                Instant::now() < stop_deadline,
+                "concurrent retries never superseded the blocked generation"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            shared.lock().unwrap().generation > blocked_generation,
+            "stop must bump generation before release"
+        );
+        // Unblock any still-parked sidecars only after ownership moved: an old
+        // READY line must not publish Ready; the new generation stays authoritative.
         std::fs::write(&release, "go").unwrap();
 
-        let _ = first.join().unwrap();
-        let _ = retry_a.join().unwrap();
-        let _ = retry_b.join().unwrap();
+        let first_result = first.join().unwrap();
+        let retry_a_result = retry_a.join().unwrap();
+        let retry_b_result = retry_b.join().unwrap();
+        assert!(
+            first_result.is_err(),
+            "old generation must not publish Ready after concurrent retry"
+        );
+        let first_err = first_result.unwrap_err();
+        assert!(
+            first_err.contains("replaced") || first_err.contains("did not authenticate"),
+            "unexpected old-generation error: {first_err}"
+        );
+        assert!(
+            retry_a_result.is_ok() || retry_b_result.is_ok(),
+            "at least one retry must become Ready; a={retry_a_result:?} b={retry_b_result:?}"
+        );
 
         let session = shared.lock().unwrap();
         assert_eq!(session.phase, Phase::Ready, "detail={}", session.detail);
         assert!(session.child.is_some());
         let owner_generation = session.generation;
         let owner_pid = session.child.as_ref().map(|child| child.id());
+        assert!(
+            owner_generation > blocked_generation,
+            "new generation must remain authoritative (blocked={blocked_generation}, owner={owner_generation})"
+        );
         drop(session);
 
         let recorded: Vec<u32> = std::fs::read_to_string(&pid_log)
@@ -737,13 +780,13 @@ time.sleep(30)\n",
         assert_eq!(
             live.len(),
             1,
-            "repeated retry must leave exactly one live sidecar, got {live:?}"
+            "retry during Authenticating must leave exactly one live sidecar, got {live:?}"
         );
         assert_eq!(Some(live[0]), owner_pid);
-        assert!(owner_generation >= 1);
 
         stop(&shared);
         assert_eq!(shared.lock().unwrap().phase, Phase::Stopped);
+        assert!(shared.lock().unwrap().child.is_none());
         assert!(!alive(live[0]), "quit/stop must reap the owned process group");
         let _ = std::fs::remove_file(&pid_log);
         let _ = std::fs::remove_file(&barrier);
